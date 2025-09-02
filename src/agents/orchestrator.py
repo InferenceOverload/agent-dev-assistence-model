@@ -1,91 +1,144 @@
-"""Orchestrator Agent - Root agent for intent routing and sub-agent coordination."""
+"""Minimal Orchestrator that chains Sizer → Policy → Ingest → Index → RAG."""
 
-from google.adk.agents import Agent
-from typing import Dict, Any, List
-import logging
-
-logger = logging.getLogger(__name__)
-
-
-def route_to_agent(intent: str, query: str) -> str:
-    """Route user query to appropriate sub-agent based on intent.
-    
-    Args:
-        intent: Detected intent (ingest, ask, plan, develop, sandbox)
-        query: User query to process
-    
-    Returns:
-        Response from the appropriate sub-agent
-    """
-    logger.info(f"Routing intent '{intent}' with query: {query}")
-    
-    # Mock routing logic for testing
-    routing_map = {
-        "ingest": "repo_ingestor_agent",
-        "ask": "rag_answerer_agent",
-        "plan": "rally_planner_agent",
-        "develop": "dev_pr_agent",
-        "sandbox": "sandbox_runner_agent",
-        "index": "indexer_agent",
-    }
-    
-    agent_name = routing_map.get(intent, "unknown")
-    return f"[{agent_name}] Processing: {query}"
+from dataclasses import dataclass
+from pathlib import Path
+from src.tools.sizer import measure_repo, SizerReport
+from src.core.policy import decide_vectorization, VectorizationDecision
+from src.agents.repo_ingestor import ingest_repo
+from src.agents.indexer import index_repo, SessionIndex
 
 
-def detect_intent(query: str) -> str:
-    """Detect user intent from query.
+class RAGAnswererAgent:
+    """Simple RAG answerer that uses a retriever."""
     
-    Args:
-        query: User query
+    def __init__(self, retriever):
+        """Initialize with a retriever.
+        
+        Args:
+            retriever: HybridRetriever instance
+        """
+        self.retriever = retriever
     
-    Returns:
-        Detected intent category
-    """
-    query_lower = query.lower()
-    
-    # Simple keyword-based intent detection for testing
-    if any(word in query_lower for word in ["clone", "ingest", "repo", "repository"]):
-        return "ingest"
-    elif any(word in query_lower for word in ["what", "how", "why", "explain", "tell"]):
-        return "ask"
-    elif any(word in query_lower for word in ["plan", "story", "rally", "ticket"]):
-        return "plan"
-    elif any(word in query_lower for word in ["implement", "code", "develop", "pr", "pull"]):
-        return "develop"
-    elif any(word in query_lower for word in ["deploy", "sandbox", "preview", "cloud run"]):
-        return "sandbox"
-    elif any(word in query_lower for word in ["index", "embed", "vector"]):
-        return "index"
-    else:
-        return "ask"  # Default to Q&A
+    def answer(self, query: str, k: int = 12, write_docs: bool = False) -> dict:
+        """Answer a query using the retriever.
+        
+        Args:
+            query: Query text
+            k: Number of results to retrieve
+            write_docs: Whether to write documentation
+            
+        Returns:
+            Answer dictionary with sources
+        """
+        # Search for relevant chunks
+        results = self.retriever.search(query, k=k)
+        
+        if not results:
+            return {
+                "answer": "No relevant information found.",
+                "sources": [],
+                "token_count": 0,
+                "model_used": "none"
+            }
+        
+        # Extract sources
+        sources = [result.path for result in results]
+        
+        # Simple answer generation (stub for now)
+        answer = f"Found {len(results)} relevant code sections. Top match: {results[0].path}"
+        if results[0].snippet:
+            answer += f"\n\nRelevant code:\n{results[0].snippet}"
+        
+        response = {
+            "answer": answer,
+            "sources": sources,
+            "token_count": len(answer) // 4,  # Rough estimate
+            "model_used": "simple"
+        }
+        
+        # Write docs if requested
+        if write_docs:
+            docs_path = Path("docs") / "generated" / f"{query.replace(' ', '_')[:50]}.md"
+            docs_path.parent.mkdir(parents=True, exist_ok=True)
+            docs_content = f"# {query}\n\n{answer}\n\n## Sources\n\n"
+            for source in sources:
+                docs_content += f"- {source}\n"
+            docs_path.write_text(docs_content)
+            response["docs_file"] = str(docs_path)
+        
+        return response
 
 
-# Create the ADK Agent
-orchestrator_agent = Agent(
-    name="orchestrator",
-    model="gemini-2.0-flash-exp",
-    description="Root orchestrator that routes requests to specialized sub-agents",
-    instruction="""You are the orchestrator for a multi-agent system.
+class OrchestratorAgent:
+    """Minimal orchestrator that chains the pipeline steps."""
     
-    Your role is to:
-    1. Understand user intent from their queries
-    2. Route requests to the appropriate specialized agent
-    3. Coordinate responses from multiple agents when needed
-    
-    Available sub-agents:
-    - repo_ingestor: Clones and analyzes repositories
-    - indexer: Creates embeddings and manages vector indices
-    - rag_answerer: Answers questions using retrieval-augmented generation
-    - rally_planner: Creates Rally work items from requirements
-    - dev_pr: Implements stories and creates pull requests
-    - sandbox_runner: Deploys Cloud Run preview environments
-    - code_exec: Runs tests using built-in code execution
-    
-    Use the detect_intent and route_to_agent tools to process requests.
-    """,
-    tools=[detect_intent, route_to_agent],
-)
+    def __init__(self, root: str = ".", session_id: str = "default"):
+        """Initialize orchestrator.
+        
+        Args:
+            root: Repository root path
+            session_id: Session identifier
+        """
+        self.root = root
+        self.session_id = session_id
+        self.code_map = None
+        self.chunks = None
+        self.sizer: SizerReport | None = None
+        self.decision: VectorizationDecision | None = None
 
-# After all agents are imported, we'll add sub_agents
-# This will be done in __init__.py to avoid circular imports
+    def ingest(self) -> dict:
+        """Ingest repository and create code map and chunks.
+        
+        Returns:
+            Ingestion results with files and commit info
+        """
+        code_map, chunks = ingest_repo(self.root)
+        self.code_map, self.chunks = code_map, chunks
+        files = code_map.files
+        return {"files": files, "commit": code_map.commit}
+
+    def size_and_decide(self) -> dict:
+        """Size repository and make vectorization decision.
+        
+        Returns:
+            Sizing and decision results
+        """
+        # Reuse paths from current code_map if present; else list Source files quickly
+        files = self.code_map.files if self.code_map else []
+        self.sizer = measure_repo(self.root, files)
+        self.decision = decide_vectorization(self.sizer)
+        return {
+            "sizer": self.sizer.model_dump(),
+            "vectorization": {
+                "use_embeddings": self.decision.use_embeddings,
+                "backend": self.decision.backend,
+                "reasons": self.decision.reasons
+            }
+        }
+
+    def index(self) -> dict:
+        """Index chunks and build retriever.
+        
+        Returns:
+            Indexing results
+        """
+        assert self.code_map and self.chunks, "Call ingest() first"
+        assert self.decision, "Call size_and_decide() first"
+        result = index_repo(self.session_id, self.code_map, self.chunks, self.decision)
+        return result
+
+    def ask(self, query: str, k: int = 12, write_docs: bool = False) -> dict:
+        """Ask a query using RAG.
+        
+        Args:
+            query: Query text
+            k: Number of results to retrieve
+            write_docs: Whether to write documentation
+            
+        Returns:
+            RAG response
+        """
+        retriever = SessionIndex.get(self.session_id)
+        assert retriever is not None, "Call index() first"
+        rag = RAGAnswererAgent(retriever)
+        return rag.answer(query, k=k, write_docs=write_docs)
