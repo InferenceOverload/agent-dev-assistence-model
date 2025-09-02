@@ -1,0 +1,1 @@
+Use the indexer subagent to read repo_ingest.json and policy.json and write .claude/out/index.json.

@@ -1,0 +1,1 @@
+Use the repo-ingestor subagent to write .claude/out/repo_ingest.json (then echo the path).
