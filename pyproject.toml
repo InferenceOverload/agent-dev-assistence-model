@@ -14,10 +14,14 @@ dependencies = [
     "redis",
     "uvicorn",
     "fastapi",
-    "rank-bm25",
+    "numpy~=2.0",
+    "rank-bm25~=0.2",
     "google-cloud-secret-manager",
-    # "faiss-cpu",  # Optional, uncomment if needed
+    # "faiss-cpu~=1.8",  # Optional, uncomment if needed
 ]
+
+[project.scripts]
+adk-orch = "src.ui.cli:main"
 
 [project.optional-dependencies]
 dev = [
