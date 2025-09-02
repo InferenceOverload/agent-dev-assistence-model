@@ -1,86 +1,97 @@
-"""Indexer Agent - Handles embeddings and vector indexing."""
+"""Indexer agent to embed chunks (in-memory) and build session retriever."""
 
-from google.adk.agents import Agent
-from typing import Dict, Any, List, Iterator
-import logging
-import json
+from typing import Dict, Tuple
 
-logger = logging.getLogger(__name__)
+from src.core.types import Chunk, CodeMap
+from src.core.policy import VectorizationDecision
+from src.tools.embeddings import embed_texts
+from src.tools.retrieval import HybridRetriever
 
 
-def create_embeddings(texts_json: str, model: str = "text-embedding-004") -> str:
-    """Create embeddings for text chunks.
+class SessionIndex:
+    """In-memory registry of Retrievers per session_id (ephemeral)."""
+    
+    registries: Dict[str, HybridRetriever] = {}
+
+    @classmethod
+    def put(cls, session_id: str, retriever: HybridRetriever) -> None:
+        """Store a retriever for a session.
+        
+        Args:
+            session_id: Session identifier
+            retriever: Retriever instance to store
+        """
+        cls.registries[session_id] = retriever
+
+    @classmethod
+    def get(cls, session_id: str) -> HybridRetriever | None:
+        """Get a retriever for a session.
+        
+        Args:
+            session_id: Session identifier
+            
+        Returns:
+            Retriever instance or None if not found
+        """
+        return cls.registries.get(session_id)
+
+    @classmethod
+    def drop(cls, session_id: str) -> None:
+        """Remove a retriever for a session.
+        
+        Args:
+            session_id: Session identifier
+        """
+        if session_id in cls.registries:
+            del cls.registries[session_id]
+
+
+def index_repo(
+    session_id: str,
+    code_map: CodeMap,
+    chunks: list[Chunk],
+    decision: VectorizationDecision,
+    embed_dim: int = 1536
+) -> dict:
+    """Index repository chunks and build retriever.
     
     Args:
-        texts_json: JSON string of text chunks to embed
-        model: Embedding model to use
-    
+        session_id: Session identifier
+        code_map: Repository code map
+        chunks: List of code chunks
+        decision: Vectorization policy decision
+        embed_dim: Embedding dimensionality
+        
     Returns:
-        Embedding results with vectors
+        Indexing results dictionary
     """
-    # Parse JSON input
-    import json
-    try:
-        texts = json.loads(texts_json) if texts_json else []
-    except json.JSONDecodeError:
-        texts = []
+    # For now we ALWAYS compute in-memory embeddings for simplicity
+    # (policy 'backend' only controls Vertex Vector Search, which we haven't wired yet)
     
-    logger.info(f"Creating embeddings for {len(texts)} texts")
+    if not chunks:
+        return {
+            "session_id": session_id,
+            "vector_count": 0,
+            "backend": "in_memory"
+        }
     
-    # Mock implementation
-    return json.dumps({
-        "embeddings_created": len(texts),
-        "model": model,
-        "dimensions": 1536,
-        "status": "success"
-    })
-
-
-def index_vectors(vectors_json: str, metadata_json: str) -> str:
-    """Index vectors for similarity search.
+    # Extract texts for embedding
+    texts = [chunk.text for chunk in chunks]
     
-    Args:
-        vectors_json: JSON string of embedding vectors
-        metadata_json: JSON string of metadata for each vector
+    # Get embeddings
+    vectors = embed_texts(texts, dim=embed_dim)
     
-    Returns:
-        Indexing status
-    """
-    # Parse JSON inputs
-    import json
-    try:
-        vectors = json.loads(vectors_json) if vectors_json else []
-        metadata = json.loads(metadata_json) if metadata_json else []
-    except json.JSONDecodeError:
-        vectors = []
-        metadata = []
+    # Build retriever
+    retriever = HybridRetriever()
     
-    logger.info(f"Indexing {len(vectors)} vectors")
+    # Index chunks and vectors
+    retriever.index_chunks(chunks, vectors)
     
-    # Mock implementation
-    return json.dumps({
-        "vectors_indexed": len(vectors),
-        "index_type": "streaming",
-        "status": "success",
-        "message": "Vectors indexed and ready for search"
-    })
-
-
-# Create the ADK Agent
-indexer_agent = Agent(
-    name="indexer",
-    model="gemini-2.0-flash-exp",
-    description="Agent for creating embeddings and managing vector indices",
-    instruction="""You are an indexing specialist for code search.
+    # Store in session registry
+    SessionIndex.put(session_id, retriever)
     
-    Your role:
-    1. Create embeddings for code chunks
-    2. Manage vector indices for similarity search
-    3. Optimize indexing for fast retrieval
-    
-    Use the available tools:
-    - create_embeddings: Generate vector embeddings
-    - index_vectors: Add vectors to search index
-    """,
-    tools=[create_embeddings, index_vectors]
-)
+    return {
+        "session_id": session_id,
+        "vector_count": len(vectors),
+        "backend": decision.backend if decision.use_embeddings else "in_memory"
+    }
