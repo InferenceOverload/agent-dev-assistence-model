@@ -1,0 +1,33 @@
+{
+  "$id": "index.schema.json",
+  "type": "object",
+  "required": ["dim","chunks","vector_store"],
+  "properties": {
+    "dim": {"type":"integer"},
+    "chunks": {
+      "type": "array",
+      "items": {
+        "type":"object",
+        "required":["id","path","lang","start_line","end_line","hash"],
+        "properties": {
+          "id":{"type":"string"},
+          "path":{"type":"string"},
+          "lang":{"type":"string"},
+          "start_line":{"type":"integer"},
+          "end_line":{"type":"integer"},
+          "hash":{"type":"string"}
+        }
+      }
+    },
+    "vector_store": {
+      "type":"object",
+      "required":["kind"],
+      "properties": {
+        "kind":{"type":"string","enum":["in_memory","vertex_vector_search"]},
+        "index_name":{"type":"string"},
+        "endpoint":{"type":"string"}
+      }
+    }
+  },
+  "additionalProperties": true
+}

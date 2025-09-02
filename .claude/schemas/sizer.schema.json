@@ -1,0 +1,26 @@
+{
+  "$id": "sizer.schema.json",
+  "type": "object",
+  "required": ["repo","commit","file_count","loc_total","bytes_total","lang_breakdown","avg_file_loc","max_file_loc","estimated_tokens_repo","chunk_estimate","vector_count_estimate"],
+  "properties": {
+    "repo": {"type":"string"},
+    "commit": {"type":"string"},
+    "file_count": {"type":"integer"},
+    "loc_total": {"type":"integer"},
+    "bytes_total": {"type":"integer"},
+    "lang_breakdown": {
+      "type":"object",
+      "additionalProperties": {
+        "type":"object",
+        "required":["files","loc"],
+        "properties": {"files":{"type":"integer"},"loc":{"type":"integer"}}
+      }
+    },
+    "avg_file_loc": {"type":"number"},
+    "max_file_loc": {"type":"integer"},
+    "estimated_tokens_repo": {"type":"integer"},
+    "chunk_estimate": {"type":"integer"},
+    "vector_count_estimate": {"type":"integer"}
+  },
+  "additionalProperties": false
+}

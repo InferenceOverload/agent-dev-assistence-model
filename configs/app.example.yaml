@@ -1,0 +1,62 @@
+# ADK Multi-Agent System Configuration
+# Copy to app.yaml and fill in your values
+
+gcp:
+  project: "your-gcp-project-id"  # Required
+  location: "us-central1"  # Default region
+
+vertex:
+  fast_model: "gemini-2.0-flash-exp"  # Fast routing model
+  deep_model: "gemini-1.5-pro-002"  # Deep reasoning model
+  embedding_model: "text-embedding-004"  # Embedding model
+  embedding_dim: 1536  # Output dimensionality (768, 1536, or 3072)
+
+vector_search:
+  enabled: false  # Enable Vertex Vector Search (vs in-memory)
+  index_name: null  # Will be auto-created if not specified
+  use_streaming: true  # Use streaming index for immediate queries
+
+rally:
+  api_key: null  # Rally API key (or use RALLY_API_KEY env var)
+  workspace: "your-workspace"  # Rally workspace
+  project: "your-project"  # Rally project
+
+github:
+  token: null  # GitHub personal access token (or use GITHUB_TOKEN env var)
+  owner: "your-org"  # GitHub organization or user
+  repo: "your-repo"  # Repository name
+
+session:
+  ttl_minutes: 60  # Session timeout in minutes
+  use_memory_bank: false  # Use persistent Memory Bank (default: in-memory)
+
+# Sandbox deployment settings
+sandbox:
+  gcr_repo: "gcr.io/your-project/sandbox"  # Container registry
+  cloud_run_region: "us-central1"  # Cloud Run region
+  max_instances: 1  # Max Cloud Run instances per sandbox
+  
+# Logging settings
+logging:
+  level: "INFO"  # Log level (DEBUG, INFO, WARNING, ERROR)
+  structured: true  # Use structured JSON logging
+  
+# Agent-specific settings
+agents:
+  orchestrator:
+    temperature: 0.1  # Low temperature for consistent routing
+    max_tokens: 1024
+    
+  rag_answerer:
+    retrieval_k: 12  # Number of chunks to retrieve
+    expand_neighbors: true  # Include neighbor chunks
+    max_context_tokens: 500000  # Switch to deep model above this
+    
+  dev_pr:
+    auto_format: true  # Auto-format code before committing
+    run_tests: true  # Run tests before creating PR
+    draft_pr: true  # Create PRs as drafts initially
+    
+  sandbox:
+    auto_deploy: false  # Auto-deploy on PR creation
+    cleanup_after_hours: 24  # Auto-cleanup sandbox after N hours

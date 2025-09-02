@@ -1,0 +1,11 @@
+{
+  "$id": "policy.schema.json",
+  "type": "object",
+  "required": ["use_embeddings","backend","reasons"],
+  "properties": {
+    "use_embeddings": {"type": "boolean"},
+    "backend": {"type": "string", "enum": ["in_memory","vertex_vector_search"]},
+    "reasons": {"type":"array","items":{"type":"string"}}
+  },
+  "additionalProperties": false
+}

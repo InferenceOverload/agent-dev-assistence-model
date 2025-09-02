@@ -1,0 +1,13 @@
+{
+  "$id": "repo_ingest.schema.json",
+  "type": "object",
+  "required": ["repo","commit","files","code_map","symbol_index"],
+  "properties": {
+    "repo": {"type":"string"},
+    "commit": {"type":"string"},
+    "files": {"type":"array","items":{"type":"string"}},
+    "code_map": {"type":"object","additionalProperties":{"type":"array","items":{"type":"string"}}},
+    "symbol_index": {"type":"object","additionalProperties":{"type":"array","items":{"type":"string"}}}
+  },
+  "additionalProperties": false
+}

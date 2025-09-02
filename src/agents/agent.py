@@ -1,0 +1,63 @@
+"""Main agent module for ADK."""
+
+from google.adk.agents import Agent
+from .orchestrator import detect_intent, route_to_agent
+from .repo_ingestor import clone_repository, analyze_codebase, list_repository_files
+from .rag_answerer import search_codebase, answer_with_context, generate_documentation
+from .indexer import create_embeddings, index_vectors
+from .planner_rally import create_user_story, plan_sprint_work
+from .dev_pr import implement_feature, create_pull_request
+from .sandbox_runner import deploy_preview, teardown_preview
+from .code_exec_agent import run_python_tests, execute_code_snippet
+
+# Create the root agent that ADK expects
+root_agent = Agent(
+    name="orchestrator",
+    model="gemini-2.0-flash-exp",
+    description="Root orchestrator that routes requests to specialized sub-agents",
+    instruction="""You are the orchestrator for a multi-agent system.
+    
+    Your role is to:
+    1. Understand user intent from their queries
+    2. Route requests to the appropriate specialized agent or tool
+    3. Coordinate responses when multiple capabilities are needed
+    
+    Available capabilities through your tools:
+    - Repository ingestion: Clone and analyze codebases
+    - Code search and Q&A: Search code and answer questions
+    - Work planning: Create Rally stories and plan sprints
+    - Development: Implement features and create pull requests
+    - Deployment: Deploy preview environments
+    - Testing: Run tests and execute code
+    
+    Use the available tools to process user requests.
+    """,
+    tools=[
+        # Orchestration tools
+        detect_intent,
+        route_to_agent,
+        # Repo ingestion tools
+        clone_repository,
+        analyze_codebase,
+        list_repository_files,
+        # RAG tools
+        search_codebase,
+        answer_with_context,
+        generate_documentation,
+        # Indexing tools
+        create_embeddings,
+        index_vectors,
+        # Planning tools
+        create_user_story,
+        plan_sprint_work,
+        # Development tools
+        implement_feature,
+        create_pull_request,
+        # Deployment tools
+        deploy_preview,
+        teardown_preview,
+        # Testing tools
+        run_python_tests,
+        execute_code_snippet,
+    ]
+)
