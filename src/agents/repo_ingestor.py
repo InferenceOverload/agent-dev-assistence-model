@@ -1,114 +1,136 @@
-"""Repo Ingestor Agent - Handles repository cloning and analysis."""
+"""Repository Ingestor - ingest repo files, build CodeMap and Chunks."""
 
-from google.adk.agents import Agent
-from typing import Dict, Any, Optional
-import logging
-import json
+import os
+import subprocess
+import hashlib
+from pathlib import Path
+from typing import Tuple, List
 
-logger = logging.getLogger(__name__)
+from src.core.types import Chunk, CodeMap
+from src.tools.repo_io import list_source_files, read_text_file
+from src.tools.parsing import detect_language, extract_imports, find_symbols, split_code_windows
 
 
-def clone_repository(repo_url: str, branch: Optional[str] = None) -> str:
-    """Clone a repository for analysis.
+def get_git_commit(root: str) -> str:
+    """Get the current git commit SHA or fallback to 'workspace'.
     
     Args:
-        repo_url: URL of the repository to clone
-        branch: Optional branch to checkout
+        root: Repository root path
     
     Returns:
-        Status message with repository information
+        Short commit SHA or 'workspace' if not a git repository
     """
-    logger.info(f"Cloning repository: {repo_url} (branch: {branch or 'main'})")
+    try:
+        result = subprocess.run(
+            ['git', 'rev-parse', '--short', 'HEAD'],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            timeout=10
+        )
+        if result.returncode == 0:
+            return result.stdout.strip()
+    except (subprocess.TimeoutExpired, subprocess.SubprocessError, FileNotFoundError):
+        pass
     
-    # Mock implementation for testing
-    return json.dumps({
-        "status": "success",
-        "repo_url": repo_url,
-        "branch": branch or "main",
-        "files_found": 42,
-        "languages": ["python", "javascript", "yaml"],
-        "message": f"Successfully cloned repository from {repo_url}"
-    })
+    return "workspace"
 
 
-def analyze_codebase(repo_path: str) -> str:
-    """Analyze the codebase structure and create a code map.
+def compute_hash(text: str) -> str:
+    """Compute SHA1 hash of normalized text content.
     
     Args:
-        repo_path: Path to the cloned repository
+        text: Text content to hash
     
     Returns:
-        Code map with files, dependencies, and symbols
+        SHA1 hash as hexadecimal string
     """
-    logger.info(f"Analyzing codebase at: {repo_path}")
+    # Normalize text: strip spaces at end of lines
+    normalized_lines = [line.rstrip() for line in text.splitlines()]
+    normalized_text = '\n'.join(normalized_lines)
     
-    # Mock implementation for testing
-    return json.dumps({
-        "code_map": {
-            "total_files": 42,
-            "total_lines": 5000,
-            "main_languages": ["python", "javascript"],
-            "key_modules": [
-                "src/agents",
-                "src/tools",
-                "src/services"
-            ],
-            "dependencies": {
-                "python": ["google-adk", "vertexai", "pydantic"],
-                "javascript": ["react", "typescript"]
-            }
-        },
-        "message": "Code map generated successfully"
-    })
+    return hashlib.sha1(normalized_text.encode('utf-8')).hexdigest()
 
 
-def list_repository_files(repo_path: str, pattern: str = "*") -> str:
-    """List files in the repository matching a pattern.
+def ingest_repo(root: str = ".") -> Tuple[CodeMap, List[Chunk]]:
+    """Ingest repository files and create CodeMap and Chunks.
     
     Args:
-        repo_path: Path to the repository
-        pattern: Glob pattern to match files
+        root: Repository root path
     
     Returns:
-        List of matching files
+        Tuple of (CodeMap, list of Chunks)
     """
-    logger.info(f"Listing files in {repo_path} with pattern: {pattern}")
+    # Step 1: Get files and basic info
+    files = list_source_files(root)
+    commit = get_git_commit(root)
+    repo = os.path.basename(os.path.abspath(root))
     
-    # Mock implementation
-    return json.dumps({
-        "files": [
-            "src/agents/orchestrator.py",
-            "src/agents/repo_ingestor.py",
-            "src/tools/repo_io.py",
-            "README.md",
-            "pyproject.toml"
-        ],
-        "total_count": 5
-    })
-
-
-# Create the ADK Agent
-repo_ingestor_agent = Agent(
-    name="repo_ingestor",
-    model="gemini-2.0-flash-exp",
-    description="Agent for cloning and analyzing repositories",
-    instruction="""You are a repository ingestion specialist.
+    # Initialize collections
+    all_chunks = []
+    deps = {}
+    symbol_index = {}
+    processed_files = []
     
-    Your capabilities:
-    1. Clone repositories from various sources (GitHub, GitLab, etc.)
-    2. Analyze codebase structure and create code maps
-    3. Identify programming languages, dependencies, and key modules
-    4. List and filter files based on patterns
+    # Step 3: Process each file
+    for file_path in files:
+        try:
+            # Read file content
+            text = read_text_file(root, file_path)
+            
+            # Get language and metadata
+            lang = detect_language(file_path)
+            symbols = find_symbols(text, lang)
+            imports = extract_imports(text, lang)
+            
+            # Split into windows/chunks
+            windows = split_code_windows(text, lang)
+            
+            # Create chunks for each window
+            for start_line, end_line, chunk_text in windows:
+                chunk_id = f"{repo}:{commit}:{file_path}#{start_line}-{end_line}"
+                
+                chunk = Chunk(
+                    id=chunk_id,
+                    repo=repo,
+                    commit=commit,
+                    path=file_path,
+                    lang=lang,
+                    start_line=start_line,
+                    end_line=end_line,
+                    text=chunk_text,
+                    symbols=symbols[:50],  # Limit to 50 symbols
+                    imports=imports[:50],  # Limit to 50 imports
+                    neighbors=[],  # Will be populated later if needed
+                    hash=compute_hash(chunk_text)
+                )
+                
+                all_chunks.append(chunk)
+            
+            # Build dependencies map
+            deps[file_path] = imports
+            
+            # Build symbol index: symbol -> [files that define it]
+            for symbol in symbols:
+                if symbol not in symbol_index:
+                    symbol_index[symbol] = []
+                if file_path not in symbol_index[symbol]:
+                    symbol_index[symbol].append(file_path)
+            
+            processed_files.append(file_path)
+            
+        except (ValueError, OSError) as e:
+            # Skip files that can't be read (binary, too large, etc.)
+            print(f"Skipping file {file_path}: {e}")
+            continue
     
-    Use the available tools to:
-    - clone_repository: Clone a repository from a URL
-    - analyze_codebase: Create a comprehensive code map
-    - list_repository_files: List files matching patterns
+    # Create CodeMap
+    code_map = CodeMap(
+        repo=repo,
+        commit=commit,
+        files=processed_files,
+        deps=deps,
+        symbol_index=symbol_index
+    )
     
-    When asked to ingest a repository, always:
-    1. Clone it first
-    2. Analyze the structure
-    3. Report key findings
-    """,
-    tools=[clone_repository, analyze_codebase, list_repository_files]
-)
+    return code_map, all_chunks
