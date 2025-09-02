@@ -1,10 +1,12 @@
 """Main agent module for ADK."""
 
 from google.adk.agents import Agent
-from .orchestrator import detect_intent, route_to_agent
-from .repo_ingestor import clone_repository, analyze_codebase, list_repository_files
+# Orchestrator is now class-based, no longer provides these functions
+# from .orchestrator import detect_intent, route_to_agent
+from .repo_ingestor import ingest_repo
 from .rag_answerer import RAGAnswerer
-from .indexer import create_embeddings, index_vectors
+# Indexer is now class-based, no longer provides these functions
+# from .indexer import create_embeddings, index_vectors
 from .planner_rally import create_user_story, plan_sprint_work
 from .dev_pr import implement_feature, create_pull_request
 from .sandbox_runner import deploy_preview, teardown_preview
@@ -33,18 +35,11 @@ root_agent = Agent(
     Use the available tools to process user requests.
     """,
     tools=[
-        # Orchestration tools
-        detect_intent,
-        route_to_agent,
         # Repo ingestion tools
-        clone_repository,
-        analyze_codebase,
-        list_repository_files,
+        ingest_repo,
         # Note: RAGAnswerer is a class, not directly used as tools
         # RAG functionality should be accessed through orchestrator
-        # Indexing tools
-        create_embeddings,
-        index_vectors,
+        # Orchestration and indexing are now class-based
         # Planning tools
         create_user_story,
         plan_sprint_work,
