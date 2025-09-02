@@ -3,7 +3,7 @@
 from google.adk.agents import Agent
 from .orchestrator import detect_intent, route_to_agent
 from .repo_ingestor import clone_repository, analyze_codebase, list_repository_files
-from .rag_answerer import search_codebase, answer_with_context, generate_documentation
+from .rag_answerer import RAGAnswerer
 from .indexer import create_embeddings, index_vectors
 from .planner_rally import create_user_story, plan_sprint_work
 from .dev_pr import implement_feature, create_pull_request
@@ -40,10 +40,8 @@ root_agent = Agent(
         clone_repository,
         analyze_codebase,
         list_repository_files,
-        # RAG tools
-        search_codebase,
-        answer_with_context,
-        generate_documentation,
+        # Note: RAGAnswerer is a class, not directly used as tools
+        # RAG functionality should be accessed through orchestrator
         # Indexing tools
         create_embeddings,
         index_vectors,

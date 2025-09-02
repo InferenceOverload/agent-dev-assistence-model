@@ -75,6 +75,15 @@ class AgentResponse(BaseModel):
     metadata: Dict[str, Any] = Field(default_factory=dict, description="Response metadata")
     
 
+class RAGResponse(BaseModel):
+    """Response from RAG answering system."""
+    answer: str = Field(..., description="Generated answer")
+    sources: List[str] = Field(default_factory=list, description="Source paths referenced")
+    token_count: int = Field(..., description="Estimated token count of context")
+    chunks_used: List[str] = Field(default_factory=list, description="Chunk IDs used")
+    model_used: str = Field(..., description="Model used for generation")
+    
+
 class ChatMessage(BaseModel):
     """Chat message for UI."""
     role: str = Field(..., description="Message role (user/assistant/system)")
