@@ -21,13 +21,20 @@ _orch = OrchestratorAgent(
 
 
 # ---- Tools exposed to ADK ----
-def load_repo(url: str, ref: str | None = None) -> dict:
+def load_repo(url: str, ref: str = "") -> dict:
     """
     Clone a repo (https or file://) into a local workspace and set as active root.
-    Returns {loaded, files, commit, status}.
+    
+    Parameters:
+        url: Repository URL (https or file://).
+        ref: Optional git ref (branch, tag, or commit). Use empty string if not provided.
+    
+    Returns:
+        Dictionary with keys: loaded (path), files (count), commit (hash), status (list).
     """
     status = [f"load_repo: {url}"]
-    r = _orch.load_repo(url, ref=ref)
+    ref_opt = ref if ref else None  # Convert empty string to None for internal use
+    r = _orch.load_repo(url, ref=ref_opt)
     status += r.get("status", [])
     ing = _orch.ingest()
     status += ing.get("status", [])
@@ -37,38 +44,45 @@ def load_repo(url: str, ref: str | None = None) -> dict:
 
 def ingest() -> dict:
     """
-    Ingest repository and create code map and chunks.
-    Returns files list, commit hash, and status logs.
+    Ingest the current repository root.
+    
+    Returns:
+        Dictionary with keys: files (list), commit (hash), status (list).
     """
-    out = _orch.ingest()
-    return out
+    return _orch.ingest()
 
 
 def decide() -> dict:
     """
-    Size repository and make vectorization decision.
-    Returns sizer report, vectorization decision, and status logs.
+    Compute sizing and vectorization policy decision.
+    
+    Returns:
+        Dictionary with keys: sizer (report), vectorization (decision), status (list).
     """
-    out = _orch.size_and_decide()
-    return out
+    return _orch.size_and_decide()
 
 
 def index() -> dict:
     """
-    Index chunks and build retriever.
-    Returns indexing results with vector count and status logs.
+    Build an in-memory index (embeddings + retriever).
+    
+    Returns:
+        Dictionary with keys: session_id, vector_count, backend, status (list).
     """
-    out = _orch.index()
-    return out
+    return _orch.index()
 
 
 def ask(query: str) -> dict:
     """
-    Ask a query using RAG.
-    Returns answer, sources, and status logs.
+    Answer a question about the current repository.
+    
+    Parameters:
+        query: The user question.
+    
+    Returns:
+        Dictionary with keys: answer, sources (list), token_count, model_used, status (list).
     """
-    out = _orch.ask(query, k=12, write_docs=False)
-    return out
+    return _orch.ask(query, k=12, write_docs=False)
 
 
 # ---- Create the root agent ----
