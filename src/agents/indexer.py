@@ -2,11 +2,11 @@
 
 from typing import Dict, Tuple
 
-from src.core.types import Chunk, CodeMap
-from src.core.policy import VectorizationDecision
-from src.core.storage import StorageFactory
-from src.tools.embeddings import embed_texts
-from src.tools.retrieval import HybridRetriever
+from ..core.types import Chunk, CodeMap
+from ..core.policy import VectorizationDecision
+from ..core.storage import StorageFactory
+from ..tools.embeddings import embed_texts
+from ..tools.retrieval import HybridRetriever
 
 
 def index_repo(

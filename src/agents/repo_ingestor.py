@@ -6,9 +6,9 @@ import hashlib
 from pathlib import Path
 from typing import Tuple, List
 
-from src.core.types import Chunk, CodeMap
-from src.tools.repo_io import list_source_files, read_text_file
-from src.tools.parsing import detect_language, extract_imports, find_symbols, split_code_windows
+from ..core.types import Chunk, CodeMap
+from ..tools.repo_io import list_source_files, read_text_file
+from ..tools.parsing import detect_language, extract_imports, find_symbols, split_code_windows
 
 
 def get_git_commit(root: str) -> str:

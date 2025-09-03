@@ -2,11 +2,11 @@
 
 from dataclasses import dataclass
 from pathlib import Path
-from src.tools.sizer import measure_repo, SizerReport
-from src.core.policy import decide_vectorization, VectorizationDecision
-from src.core.storage import StorageFactory
-from src.agents.repo_ingestor import ingest_repo
-from src.agents.indexer import index_repo
+from ..tools.sizer import measure_repo, SizerReport
+from ..core.policy import decide_vectorization, VectorizationDecision
+from ..core.storage import StorageFactory
+from .repo_ingestor import ingest_repo
+from .indexer import index_repo
 
 
 class RAGAnswererAgent:

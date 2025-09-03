@@ -7,7 +7,7 @@ vector backend to choose based on repository characteristics and usage patterns.
 from typing import List
 from pydantic import BaseModel
 
-from src.tools.sizer import SizerReport
+from ..tools.sizer import SizerReport
 
 
 class VectorizationDecision(BaseModel):

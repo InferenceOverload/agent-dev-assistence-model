@@ -2,7 +2,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any, Sequence
 from pydantic import BaseModel
-from src.core.types import Chunk, CodeMap
+from .types import Chunk, CodeMap
 
 # --- Session store contracts ---
 class SessionStore(ABC):
