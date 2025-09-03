@@ -109,17 +109,36 @@ def test_orchestrator_full_pipeline(mock_embed_texts, temp_repo):
     assert any("helper.py" in source for source in ask_result["sources"])
 
 
-def test_orchestrator_assertions():
-    """Test orchestrator assertion errors for out-of-order operations."""
+def test_orchestrator_assertions(monkeypatch):
+    """Test that orchestrator requires proper order of operations."""
+    # Mock embed_texts to avoid needing GCP credentials
+    def mock_embed_texts(texts, dim=1536):
+        return [[0.1] * dim for _ in texts]
+    
+    monkeypatch.setattr("src.agents.indexer.embed_texts", mock_embed_texts)
+    
     orchestrator = OrchestratorAgent(root=".", session_id="test_assertions")
     
-    # Should fail if index() called before ingest()
-    with pytest.raises(AssertionError, match="Call ingest\\(\\) first"):
+    # Test that index requires ingest and size_and_decide
+    with pytest.raises(AssertionError, match="Call ingest"):
         orchestrator.index()
     
-    # Should fail if ask() called before index()
-    with pytest.raises(AssertionError, match="Call index\\(\\) first"):
-        orchestrator.ask("test query")
+    # Ingest first
+    orchestrator.ingest()
+    
+    # Still need size_and_decide
+    with pytest.raises(AssertionError, match="Call size_and_decide"):
+        orchestrator.index()
+    
+    # Now size_and_decide
+    orchestrator.size_and_decide()
+    
+    # Now index should work
+    result = orchestrator.index()
+    assert "status" in result
+    
+    # Test that ask creates index if needed
+    orchestrator.ask("test query")
 
 
 def test_rag_answerer_agent():

@@ -88,6 +88,21 @@ class OrchestratorAgent:
         self.sizer: SizerReport | None = None
         self.decision: VectorizationDecision | None = None
         self.storage_factory = storage_factory or StorageFactory(use_vertex=False)
+    
+    def load_repo(self, url: str, ref: str | None = None) -> dict:
+        """Clone a repo URL and set as current root; clears previous state."""
+        from ..tools.repo_io import clone_repo
+        status = ["starting clone…"]
+        path = clone_repo(url, ref=ref)
+        status.append(f"cloned to {path}")
+        # Reset state to new root
+        self.root = path
+        self.code_map = None
+        self.chunks = None
+        self.sizer = None
+        self.decision = None
+        status.append("switched orchestrator root")
+        return {"root": path, "status": status}
 
     def ingest(self) -> dict:
         """Ingest repository and create code map and chunks.
@@ -95,10 +110,12 @@ class OrchestratorAgent:
         Returns:
             Ingestion results with files and commit info
         """
+        status = [f"ingesting repo at {self.root}…"]
         code_map, chunks = ingest_repo(self.root)
         self.code_map, self.chunks = code_map, chunks
         files = code_map.files
-        return {"files": files, "commit": code_map.commit}
+        status.append(f"found {len(files)} files @ commit {code_map.commit}")
+        return {"files": files, "commit": code_map.commit, "status": status}
 
     def size_and_decide(self) -> dict:
         """Size repository and make vectorization decision.
@@ -106,17 +123,20 @@ class OrchestratorAgent:
         Returns:
             Sizing and decision results
         """
+        status = ["sizing repo…"]
         # Reuse paths from current code_map if present; else list Source files quickly
         files = self.code_map.files if self.code_map else []
         self.sizer = measure_repo(self.root, files)
         self.decision = decide_vectorization(self.sizer)
+        status.append(f"decision: use_embeddings={self.decision.use_embeddings}, backend={self.decision.backend}")
         return {
             "sizer": self.sizer.model_dump(),
             "vectorization": {
                 "use_embeddings": self.decision.use_embeddings,
                 "backend": self.decision.backend,
                 "reasons": self.decision.reasons
-            }
+            },
+            "status": status
         }
 
     def index(self) -> dict:
@@ -127,7 +147,10 @@ class OrchestratorAgent:
         """
         assert self.code_map and self.chunks, "Call ingest() first"
         assert self.decision, "Call size_and_decide() first"
+        status = ["indexing…"]
         result = index_repo(self.session_id, self.code_map, self.chunks, self.decision, storage_factory=self.storage_factory)
+        status.append(f"indexed {result.get('vector_count', 0)} vectors using {result.get('backend')}")
+        result["status"] = status
         return result
 
     def ask(self, query: str, k: int = 12, write_docs: bool = False) -> dict:
@@ -142,6 +165,17 @@ class OrchestratorAgent:
             RAG response
         """
         retriever = self.storage_factory.session_store().get_retriever(self.session_id)
-        assert retriever is not None, "Call index() first"
+        status = [f"answering: {query[:80]}…"]
+        if retriever is None:
+            status.append("no index found; indexing now…")
+            if self.code_map is None:
+                self.ingest()
+            if self.decision is None:
+                self.size_and_decide()
+            _ = self.index()
+            retriever = self.storage_factory.session_store().get_retriever(self.session_id)
+            assert retriever is not None, "Indexing failed"
         rag = RAGAnswererAgent(retriever)
-        return rag.answer(query, k=k, write_docs=write_docs)
+        out = rag.answer(query, k=k, write_docs=write_docs)
+        out["status"] = status + ["answer ready"]
+        return out

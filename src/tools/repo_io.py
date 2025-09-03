@@ -5,6 +5,10 @@ import pathlib
 from pathlib import Path
 from typing import List, Optional
 import fnmatch
+import hashlib
+import subprocess
+import shutil
+import re
 
 
 def safe_join(root: str, rel: str) -> str:
@@ -184,3 +188,37 @@ def read_text_file(root: str, rel: str, max_bytes: int = 1_500_000) -> str:
             raise IOError(f"Cannot read file {rel}: {e}")
     
     raise ValueError(f"Cannot decode text file: {rel}")
+
+
+def safe_workspace_root() -> str:
+    """Ensure a local workspace folder exists for cloned repos."""
+    p = pathlib.Path(".workspace/repos").resolve()
+    p.mkdir(parents=True, exist_ok=True)
+    return str(p)
+
+
+def slugify_url(url: str) -> str:
+    """Create a safe directory name from a URL."""
+    h = hashlib.sha1(url.encode("utf-8")).hexdigest()[:8]
+    base = re.sub(r"[^a-zA-Z0-9._-]+", "-", (url.split("/")[-1] or "repo"))[:24]
+    return f"{base}-{h}"
+
+
+def clone_repo(url: str, ref: str | None = None) -> str:
+    """
+    Clone a git repo into .workspace/repos/<slug>, shallow by default.
+    Supports https and file:// URLs. Returns absolute path to clone.
+    If the folder exists, keep it; if ref is provided, fetch/checkout that ref.
+    """
+    root = pathlib.Path(safe_workspace_root())
+    slug = slugify_url(url)
+    dest = root / slug
+    if not dest.exists():
+        cmd = ["git", "clone", "--depth", "1", url, str(dest)]
+        subprocess.run(cmd, check=True, capture_output=True, text=True)
+    if ref:
+        subprocess.run(["git", "-C", str(dest), "fetch", "--depth", "1", "origin", ref], 
+                      check=True, capture_output=True, text=True)
+        subprocess.run(["git", "-C", str(dest), "checkout", ref], 
+                      check=True, capture_output=True, text=True)
+    return str(dest.resolve())
