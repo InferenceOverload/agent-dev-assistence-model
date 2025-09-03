@@ -98,15 +98,34 @@ def list_source_files(
         List of relative file paths (posix style)
     """
     if include_globs is None:
-        include_globs = ["src/**", "configs/**", "docs/**"]
+        include_globs = ["**"]  # Include all files by default, rely on exclude patterns
     
     if exclude_globs is None:
         exclude_globs = [
-            "**/node_modules/**", "**/.git/**", "**/.venv/**", "**/dist/**",
-            "**/build/**", "**/.next/**", "**/.turbo/**", "**/.pytest_cache/**",
-            "**/__pycache__/**", "**/.mypy_cache/**", "**/.ruff_cache/**",
-            "**/*.lock", "**/package-lock.json", "**/yarn.lock", "**/*.min.*",
-            "**/*.png", "**/*.jpg", "**/*.jpeg", "**/*.pdf"
+            # Directory patterns - match at any level
+            "node_modules/*", "*/node_modules/*", 
+            ".git/*", "*/.git/*",
+            ".venv/*", "*/.venv/*", "venv/*", "*/venv/*",
+            "dist/*", "*/dist/*", 
+            "build/*", "*/build/*",
+            ".next/*", "*/.next/*",
+            ".turbo/*", "*/.turbo/*",
+            ".pytest_cache/*", "*/.pytest_cache/*",
+            "__pycache__/*", "*/__pycache__/*",
+            ".mypy_cache/*", "*/.mypy_cache/*",
+            ".ruff_cache/*", "*/.ruff_cache/*",
+            "coverage/*", "*/coverage/*",
+            "logs/*", "*/logs/*",
+            "tmp/*", "*/tmp/*",
+            "temp/*", "*/temp/*",
+            # File patterns
+            "*.pyc", "*.pyo", ".DS_Store", "*/.DS_Store",
+            "package-lock.json", "*/package-lock.json",
+            "yarn.lock", "*/yarn.lock",
+            "*.min.js", "*.min.css",
+            ".env", ".env.*", "*/.env", "*/.env.*",
+            ".coverage", "*/.coverage",
+            "*.log"
         ]
     
     root_path = Path(root).resolve()
