@@ -100,7 +100,7 @@ def test_clone_repo_reuse_existing(tmp_path):
 def test_orchestrator_status_logs(monkeypatch):
     """Test that orchestrator methods return status logs."""
     # Mock embed_texts to avoid needing GCP credentials
-    def mock_embed_texts(texts, dim=1536):
+    def mock_embed_texts(texts, dim=768):
         return [[0.1] * dim for _ in texts]
     
     monkeypatch.setattr("src.agents.indexer.embed_texts", mock_embed_texts)

@@ -64,7 +64,7 @@ class VertexVectorStore(VectorStore):
     """
     Placeholder adapter for Vertex Vector Search. Not implemented yet.
     """
-    def __init__(self, index_name: str | None = None, endpoint: str | None = None, dim: int = 1536) -> None:
+    def __init__(self, index_name: str | None = None, endpoint: str | None = None, dim: int = 768) -> None:
         self.index_name = index_name
         self.endpoint = endpoint
         self.dim = dim
@@ -76,7 +76,7 @@ class VertexVectorStore(VectorStore):
 # Factory
 class StorageFactory(BaseModel):
     use_vertex: bool = False
-    dim: int = 1536
+    dim: int = 768
     _session_store: SessionStore | None = None
     _vector_store: VectorStore | None = None
     

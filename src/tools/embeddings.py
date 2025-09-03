@@ -53,12 +53,12 @@ def _truncate_text(text: str, max_chars: int = 8000) -> str:
     return text[:max_chars].rsplit(' ', 1)[0]  # Split on word boundary
 
 
-def embed_texts(texts: List[str], dim: int = 1536) -> List[List[float]]:
+def embed_texts(texts: List[str], dim: int = 768) -> List[List[float]]:
     """Get embeddings for texts using Vertex AI gemini-embedding-001.
     
     Args:
         texts: List of texts to embed
-        dim: Output dimensionality (768, 1536, or 3072)
+        dim: Output dimensionality (1-768, default 768)
     
     Returns:
         List of embedding vectors (preserves input order)
@@ -70,8 +70,8 @@ def embed_texts(texts: List[str], dim: int = 1536) -> List[List[float]]:
         return []
     
     # Validate dimensionality
-    if dim not in [768, 1536, 3072]:
-        raise ValueError(f"Invalid dimensionality {dim}. Must be 768, 1536, or 3072")
+    if dim < 1 or dim >= 769:
+        raise ValueError(f"Invalid dimensionality {dim}. Must be between 1 and 768")
     
     model = _get_vertex_client()
     
@@ -90,7 +90,7 @@ def embed_texts(texts: List[str], dim: int = 1536) -> List[List[float]]:
     return all_embeddings
 
 
-def embed_query(text: str, dim: int = 1536) -> List[float]:
+def embed_query(text: str, dim: int = 768) -> List[float]:
     """Convenience wrapper for embedding a single query text.
     
     Args:

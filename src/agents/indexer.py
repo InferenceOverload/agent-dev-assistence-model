@@ -14,7 +14,7 @@ def index_repo(
     code_map: CodeMap,
     chunks: list[Chunk],
     decision: VectorizationDecision,
-    embed_dim: int = 1536,
+    embed_dim: int = 768,
     storage_factory: StorageFactory | None = None
 ) -> dict:
     """Index repository chunks and build retriever.

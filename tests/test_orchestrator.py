@@ -62,9 +62,9 @@ def test_orchestrator_full_pipeline(mock_embed_texts, temp_repo):
     """Test full orchestrator pipeline: ingest -> size -> index -> ask."""
     # Mock embeddings to return deterministic vectors
     mock_embed_texts.return_value = [
-        [0.1] * 1536,  # First chunk
-        [0.2] * 1536,  # Second chunk  
-        [0.3] * 1536,  # Third chunk
+        [0.1] * 768,  # First chunk
+        [0.2] * 768,  # Second chunk  
+        [0.3] * 768,  # Third chunk
     ]
     
     # Create storage factory
@@ -112,7 +112,7 @@ def test_orchestrator_full_pipeline(mock_embed_texts, temp_repo):
 def test_orchestrator_assertions(monkeypatch):
     """Test that orchestrator requires proper order of operations."""
     # Mock embed_texts to avoid needing GCP credentials
-    def mock_embed_texts(texts, dim=1536):
+    def mock_embed_texts(texts, dim=768):
         return [[0.1] * dim for _ in texts]
     
     monkeypatch.setattr("src.agents.indexer.embed_texts", mock_embed_texts)

@@ -87,8 +87,8 @@ def test_index_repo_with_chunks(mock_embed_texts):
     
     # Mock embedding function to return deterministic vectors
     mock_embed_texts.return_value = [
-        [0.1, 0.2, 0.3] * 512,  # 1536 dimensions
-        [0.4, 0.5, 0.6] * 512   # 1536 dimensions  
+        [0.1, 0.2, 0.3] * 256,  # 768 dimensions (256 * 3 = 768)
+        [0.4, 0.5, 0.6] * 256   # 768 dimensions (256 * 3 = 768)  
     ]
     
     # Create test data
@@ -112,7 +112,7 @@ def test_index_repo_with_chunks(mock_embed_texts):
     mock_embed_texts.assert_called_once_with(
         ["def hello():\n    return 'world'",
          "function greet() {\n    console.log('hi');\n}"],
-        dim=1536
+        dim=768
     )
     
     # Verify retriever was stored

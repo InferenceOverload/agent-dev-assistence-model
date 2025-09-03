@@ -41,11 +41,11 @@ class ModelRouter:
         """
         return GenerativeModel("gemini-1.5-pro-002")
         
-    def embedder(self, dim: int = 1536) -> TextEmbeddingModel:
+    def embedder(self, dim: int = 768) -> TextEmbeddingModel:
         """Get text embedding model.
         
         Args:
-            dim: Output dimensionality (768, 1536, or 3072)
+            dim: Output dimensionality (1-768, default 768)
         
         Returns:
             Text embedding model with specified dimensions

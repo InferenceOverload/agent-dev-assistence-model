@@ -71,7 +71,7 @@ SELECT COUNT(*) as total FROM helper_data;
 @pytest.fixture
 def mock_embeddings():
     """Mock embeddings to return deterministic vectors."""
-    def fake_embed_texts(texts, dim=1536):
+    def fake_embed_texts(texts, dim=768):
         """Return deterministic vectors based on text hash."""
         vectors = []
         for i, text in enumerate(texts):

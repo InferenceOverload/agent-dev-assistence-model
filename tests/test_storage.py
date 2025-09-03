@@ -130,9 +130,9 @@ def test_vertex_vector_store():
 def test_storage_factory():
     """Test StorageFactory creates correct store types."""
     # Test default factory (in-memory)
-    factory = StorageFactory(use_vertex=False, dim=1536)
+    factory = StorageFactory(use_vertex=False, dim=768)
     assert factory.use_vertex is False
-    assert factory.dim == 1536
+    assert factory.dim == 768
     
     session_store = factory.session_store()
     assert isinstance(session_store, InMemorySessionStore)

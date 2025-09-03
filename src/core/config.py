@@ -21,7 +21,7 @@ class VertexConfig(BaseModel):
     fast_model: str = Field(default="gemini-2.0-flash-exp")
     deep_model: str = Field(default="gemini-1.5-pro-002")
     embedding_model: str = Field(default="text-embedding-004")
-    embedding_dim: int = Field(default=1536)
+    embedding_dim: int = Field(default=768)
     
 
 class VectorSearchConfig(BaseModel):

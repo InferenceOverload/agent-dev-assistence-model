@@ -44,13 +44,13 @@ class TestEmbeddings:
         mock_model.get_embeddings.return_value = [mock_embedding]
         mock_client.return_value = mock_model
         
-        result = embed_texts(["test text"], dim=1536)
+        result = embed_texts(["test text"], dim=768)
         
         assert len(result) == 1
         assert result[0] == [0.1, 0.2, 0.3]
         mock_model.get_embeddings.assert_called_once_with(
             ["test text"],
-            output_dimensionality=1536
+            output_dimensionality=768
         )
 
     @patch('src.tools.embeddings._get_vertex_client')
@@ -65,7 +65,7 @@ class TestEmbeddings:
         mock_client.return_value = mock_model
         
         texts = ["first text", "second text"]
-        result = embed_texts(texts, dim=1536)
+        result = embed_texts(texts, dim=768)
         
         assert len(result) == 2
         assert result[0] == [0.1, 0.2, 0.3]
@@ -79,12 +79,12 @@ class TestEmbeddings:
         mock_model.get_embeddings.return_value = [mock_embedding]
         mock_client.return_value = mock_model
         
-        result = embed_query("test query", dim=1536)
+        result = embed_query("test query", dim=768)
         
         assert result == [0.7, 0.8, 0.9]
         mock_model.get_embeddings.assert_called_once_with(
             ["test query"],
-            output_dimensionality=1536
+            output_dimensionality=768
         )
 
     def test_cosine_similarity_same_text(self):
