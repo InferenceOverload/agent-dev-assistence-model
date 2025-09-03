@@ -49,8 +49,8 @@ def run_pipeline(args: argparse.Namespace) -> Dict[str, Any]:
         if orchestrator.decision is None:
             orchestrator.size_and_decide()
         # Check if index exists for this session
-        from src.agents.indexer import SessionIndex
-        if SessionIndex.get(args.session) is None:
+        retriever = orchestrator.storage_factory.session_store().get_retriever(args.session)
+        if retriever is None:
             orchestrator.index()
         return orchestrator.ask(args.query, k=args.k, write_docs=args.write_docs)
     
