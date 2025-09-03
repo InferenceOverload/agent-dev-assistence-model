@@ -1,17 +1,40 @@
 ---
 name: policy-decider
 description: |
-  Decide whether to use embeddings and which backend (in_memory vs vertex_vector_search).
-  Read @.claude/out/sizer.json and write @.claude/out/policy.json matching @.claude/schemas/policy.schema.json.
-tools: Read, Write
+  IMPLEMENT CODE: Create a deterministic vectorization policy with tests.
+
+  Deliverables:
+  1) src/core/policy.py:
+     - Pydantic:
+         class VectorizationDecision(BaseModel):
+             use_embeddings: bool
+             backend: str            # "in_memory" | "vertex_vector_search"
+             reasons: list[str]
+     - def decide_vectorization(s: "SizerReport",
+                                expected_concurrent_sessions: int = 1,
+                                reuse_repo_across_sessions: bool = False) -> VectorizationDecision:
+         """
+         Rules:
+         A) use_embeddings = True if ANY:
+              s.loc_total>=80_000 or s.file_count>=1_500 or
+              s.vector_count_estimate>=8_000 or s.estimated_tokens_repo>=1_500_000
+         B) backend = "in_memory" unless ANY:
+              s.vector_count_estimate>=50_000 or s.bytes_total>=1_500_000_000 or
+              (expected_concurrent_sessions>=3 and s.vector_count_estimate>=20_000) or
+              reuse_repo_across_sessions
+         Append 1-line reasons for each fired rule.
+         """
+
+  2) tests/test_policy.py:
+     - Build small SizerReport-like fixtures (you can define a minimal class or re-use from tools.sizer).
+     - Each rule flips correctly; reasons include a human-readable line.
+
+  3) Packaging:
+     - Ensure imports resolve (policy imports SizerReport by dotted path or via typing.ForwardRef).
+
+  Process:
+  - Show diffs.
+  - Run pytest -q.
+  - Commit: "feat(core): vectorization policy + tests"
+tools: Read, Write, Edit, Bash
 ---
-You are the Policy Decider. Deterministic rules (no LLM guessing):
-- use_embeddings = TRUE if ANY:
-  loc_total >= 80000 OR file_count >= 1500 OR vector_count_estimate >= 8000 OR estimated_tokens_repo >= 1500000
-- backend = "in_memory" unless ANY:
-  vector_count_estimate >= 50000 OR bytes_total >= 1500000000 OR (expected_concurrent_sessions >= 3 AND vector_count_estimate >= 20000) OR reuse_repo_across_sessions == true
-- Reasons: produce 1-line human-readable reasons for each condition that fired.
-- Accept optional overrides via environment variables:
-  EXPECTED_CONCURRENT_SESSIONS (default 1), REUSE_REPO_ACROSS_SESSIONS (default false).
-- Validate output JSON with:
-  .claude/hooks/validate_io.sh .claude/schemas/policy.schema.json .claude/out/policy.json

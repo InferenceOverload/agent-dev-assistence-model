@@ -7,7 +7,7 @@ from pathlib import Path
 from unittest.mock import patch, MagicMock
 
 from src.agents.orchestrator import OrchestratorAgent, RAGAnswererAgent
-from src.agents.indexer import SessionIndex
+from src.core.storage import StorageFactory
 from src.tools.retrieval import HybridRetriever
 from src.core.types import RetrievalResult
 
@@ -67,11 +67,11 @@ def test_orchestrator_full_pipeline(mock_embed_texts, temp_repo):
         [0.3] * 1536,  # Third chunk
     ]
     
-    # Clear session registry
-    SessionIndex.registries.clear()
+    # Create storage factory
+    storage_factory = StorageFactory(use_vertex=False)
     
     # Initialize orchestrator
-    orchestrator = OrchestratorAgent(root=temp_repo, session_id="test_pipeline")
+    orchestrator = OrchestratorAgent(root=temp_repo, session_id="test_pipeline", storage_factory=storage_factory)
     
     # Step 1: Ingest
     ingest_result = orchestrator.ingest()
@@ -97,7 +97,7 @@ def test_orchestrator_full_pipeline(mock_embed_texts, temp_repo):
     assert "backend" in index_result
     
     # Verify retriever was stored
-    retriever = SessionIndex.get("test_pipeline")
+    retriever = storage_factory.session_store().get_retriever("test_pipeline")
     assert retriever is not None
     assert len(retriever.chunks) > 0
     
@@ -219,11 +219,11 @@ def test_orchestrator_with_small_repo(mock_embed_texts, temp_repo):
     # Mock empty embeddings (shouldn't be called for small repo)
     mock_embed_texts.return_value = []
     
-    # Clear session registry
-    SessionIndex.registries.clear()
+    # Create storage factory
+    storage_factory = StorageFactory(use_vertex=False)
     
     # Initialize orchestrator
-    orchestrator = OrchestratorAgent(root=temp_repo, session_id="small_test")
+    orchestrator = OrchestratorAgent(root=temp_repo, session_id="small_test", storage_factory=storage_factory)
     
     # Run pipeline
     ingest_result = orchestrator.ingest()

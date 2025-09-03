@@ -4,33 +4,34 @@ import pytest
 from unittest.mock import patch
 from typing import List
 
-from src.agents.indexer import SessionIndex, index_repo
+from src.agents.indexer import index_repo
 from src.core.types import Chunk, CodeMap
 from src.core.policy import VectorizationDecision
+from src.core.storage import StorageFactory
 from src.tools.retrieval import HybridRetriever
 
 
-def test_session_index():
-    """Test SessionIndex registry functionality."""
-    # Clear any existing data
-    SessionIndex.registries.clear()
+def test_session_store():
+    """Test SessionStore functionality via StorageFactory."""
+    storage_factory = StorageFactory(use_vertex=False)
+    session_store = storage_factory.session_store()
     
     # Create a mock retriever
     retriever = HybridRetriever()
     
     # Test put and get
-    SessionIndex.put("test_session", retriever)
-    assert SessionIndex.get("test_session") is retriever
+    session_store.put_retriever("test_session", retriever)
+    assert session_store.get_retriever("test_session") is retriever
     
     # Test get non-existent
-    assert SessionIndex.get("nonexistent") is None
+    assert session_store.get_retriever("nonexistent") is None
     
     # Test drop
-    SessionIndex.drop("test_session")
-    assert SessionIndex.get("test_session") is None
+    session_store.drop("test_session")
+    assert session_store.get_retriever("test_session") is None
     
     # Test drop non-existent (should not raise)
-    SessionIndex.drop("nonexistent")
+    session_store.drop("nonexistent")
 
 
 def create_test_chunks() -> List[Chunk]:
@@ -81,8 +82,8 @@ def create_test_code_map() -> CodeMap:
 @patch('src.agents.indexer.embed_texts')
 def test_index_repo_with_chunks(mock_embed_texts):
     """Test index_repo with synthetic chunks."""
-    # Clear session registry
-    SessionIndex.registries.clear()
+    # Create storage factory
+    storage_factory = StorageFactory(use_vertex=False)
     
     # Mock embedding function to return deterministic vectors
     mock_embed_texts.return_value = [
@@ -100,7 +101,7 @@ def test_index_repo_with_chunks(mock_embed_texts):
     )
     
     # Index the repo
-    result = index_repo("test_session", code_map, chunks, decision)
+    result = index_repo("test_session", code_map, chunks, decision, storage_factory=storage_factory)
     
     # Verify result
     assert result["session_id"] == "test_session"
@@ -115,7 +116,7 @@ def test_index_repo_with_chunks(mock_embed_texts):
     )
     
     # Verify retriever was stored
-    retriever = SessionIndex.get("test_session")
+    retriever = storage_factory.session_store().get_retriever("test_session")
     assert retriever is not None
     assert isinstance(retriever, HybridRetriever)
     assert len(retriever.chunks) == 2
@@ -151,8 +152,7 @@ def test_index_repo_with_chunks(mock_embed_texts):
 
 def test_index_repo_empty_chunks():
     """Test index_repo with empty chunks list."""
-    # Clear session registry
-    SessionIndex.registries.clear()
+    storage_factory = StorageFactory(use_vertex=False)
     
     code_map = create_test_code_map()
     decision = VectorizationDecision(
@@ -161,24 +161,23 @@ def test_index_repo_empty_chunks():
         reasons=["no chunks"]
     )
     
-    result = index_repo("empty_session", code_map, [], decision)
+    result = index_repo("empty_session", code_map, [], decision, storage_factory=storage_factory)
     
     assert result["session_id"] == "empty_session"
     assert result["vector_count"] == 0
     assert result["backend"] == "in_memory"
     
     # Should not store anything in registry for empty chunks
-    assert SessionIndex.get("empty_session") is None
+    assert storage_factory.session_store().get_retriever("empty_session") is None
 
 
 @patch('src.agents.indexer.embed_texts')
 def test_index_repo_different_backend(mock_embed_texts):
     """Test index_repo with different vectorization backend."""
-    # Clear session registry
-    SessionIndex.registries.clear()
+    storage_factory = StorageFactory(use_vertex=False)
     
     # Mock embedding function
-    mock_embed_texts.return_value = [[0.1] * 1536]
+    mock_embed_texts.return_value = [[0.1] * 768]
     
     chunks = create_test_chunks()[:1]  # Just one chunk
     code_map = create_test_code_map()
@@ -188,10 +187,10 @@ def test_index_repo_different_backend(mock_embed_texts):
         reasons=["large repo"]
     )
     
-    result = index_repo("vertex_session", code_map, chunks, decision, embed_dim=768)
+    result = index_repo("vertex_session", code_map, chunks, decision, embed_dim=768, storage_factory=storage_factory)
     
-    # Should still build in-memory for now but report correct backend
-    assert result["backend"] == "vertex_vector_search" 
+    # Storage factory use_vertex is False, so backend should be in_memory
+    assert result["backend"] == "in_memory" 
     assert result["vector_count"] == 1
     
     # Verify custom dimension was used

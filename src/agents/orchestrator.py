@@ -4,8 +4,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from src.tools.sizer import measure_repo, SizerReport
 from src.core.policy import decide_vectorization, VectorizationDecision
+from src.core.storage import StorageFactory
 from src.agents.repo_ingestor import ingest_repo
-from src.agents.indexer import index_repo, SessionIndex
+from src.agents.indexer import index_repo
 
 
 class RAGAnswererAgent:
@@ -72,12 +73,13 @@ class RAGAnswererAgent:
 class OrchestratorAgent:
     """Minimal orchestrator that chains the pipeline steps."""
     
-    def __init__(self, root: str = ".", session_id: str = "default"):
+    def __init__(self, root: str = ".", session_id: str = "default", storage_factory: StorageFactory | None = None):
         """Initialize orchestrator.
         
         Args:
             root: Repository root path
             session_id: Session identifier
+            storage_factory: Storage factory for session and vector stores
         """
         self.root = root
         self.session_id = session_id
@@ -85,6 +87,7 @@ class OrchestratorAgent:
         self.chunks = None
         self.sizer: SizerReport | None = None
         self.decision: VectorizationDecision | None = None
+        self.storage_factory = storage_factory or StorageFactory(use_vertex=False)
 
     def ingest(self) -> dict:
         """Ingest repository and create code map and chunks.
@@ -124,7 +127,7 @@ class OrchestratorAgent:
         """
         assert self.code_map and self.chunks, "Call ingest() first"
         assert self.decision, "Call size_and_decide() first"
-        result = index_repo(self.session_id, self.code_map, self.chunks, self.decision)
+        result = index_repo(self.session_id, self.code_map, self.chunks, self.decision, storage_factory=self.storage_factory)
         return result
 
     def ask(self, query: str, k: int = 12, write_docs: bool = False) -> dict:
@@ -138,7 +141,7 @@ class OrchestratorAgent:
         Returns:
             RAG response
         """
-        retriever = SessionIndex.get(self.session_id)
+        retriever = self.storage_factory.session_store().get_retriever(self.session_id)
         assert retriever is not None, "Call index() first"
         rag = RAGAnswererAgent(retriever)
         return rag.answer(query, k=k, write_docs=write_docs)
