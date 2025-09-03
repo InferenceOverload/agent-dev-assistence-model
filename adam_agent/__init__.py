@@ -88,7 +88,7 @@ def ask(query: str) -> dict:
 # ---- Create the root agent ----
 root_agent = Agent(
     name="adam_agent",
-    model="gemini-2.0-flash-latest",  # Use latest flash model
+    model="gemini-2.0-flash-exp",  # Use stable flash experimental model
     description="Repo analysis & RAG helper",
     instruction=(
         "You are a repo analysis assistant. "
