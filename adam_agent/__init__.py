@@ -120,7 +120,11 @@ root_agent = Agent(
         "• If the repo is tiny, include all relevant excerpts; otherwise keep context lean.\n"
         "• When the user provides a repository URL, call load_repo(url) first. Then ingest → decide → index.\n"
         "• For counting/listing code elements, you may use code_query(globs, regexes) as needed.\n"
-        "• For requirements, prefer deliver_pr(requirement=...) to produce an end-to-end PR draft automatically."
+        "• For requirements, prefer deliver_pr(requirement=...) to produce an end-to-end PR draft automatically.\n"
+        "\n"
+        "POLICY: Do NOT claim external side-effects (e.g., 'created PR', 'pushed code', 'merged branch'). "
+        "You only return drafts and patches as tool outputs. Use phrases like 'drafted PR' or 'prepared patch', "
+        "and always include the JSON or markdown returned by tools."
     ),
     tools=[load_repo, ingest, decide, index, ask],
 )
@@ -355,7 +359,24 @@ def deliver_pr(requirement: str) -> dict:
     import json
     pr = pr_draft(json.dumps(patch))
     status += pr.get("status", [])
-    return {"stories": stories, "devplan": d, "patch": patch, "pr": pr.get("pr"), "status": status}
+    pr_obj = pr.get("pr")
+    # Pre-render a markdown body for easy copy/paste
+    pr_md = ""
+    try:
+        pr_md = f"# {pr_obj.get('title','PR Draft')}\n\n{pr_obj.get('body','')}\n"
+    except Exception:
+        pr_md = "# PR Draft\n\n(Body unavailable)"
+    note = ("Draft only. No external PR was created. "
+            "Copy the markdown/body into your Git provider to open a real PR.")
+    return {
+        "stories": stories,
+        "devplan": d,
+        "patch": patch,
+        "pr": pr_obj,
+        "pr_markdown": pr_md,
+        "note": note,
+        "status": status
+    }
 
 
 root_agent.tools.extend([deliver_pr])
