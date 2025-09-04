@@ -364,10 +364,13 @@ class HybridRetriever:
                 total += min(len(lines), take)
                 if total >= max_lines_per_file:
                     break
-            summary = "\n".join(acc) if acc else ""
+            summary = "\n".join(acc).strip() if acc else ""
+            # Skip truly empty summaries; they cause empty text embeddings
+            if not summary:
+                continue
             self._file_summaries_text[path] = summary
             paths.append(path)
-            texts.append(summary or path)
+            texts.append(summary)
         if not texts:
             return
         embs = embed_fn(texts)

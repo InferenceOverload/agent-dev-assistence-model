@@ -88,6 +88,10 @@ def ingest_repo(root: str = ".") -> Tuple[CodeMap, List[Chunk]]:
             
             # Create chunks for each window
             for start_line, end_line, chunk_text in windows:
+                # Guard against empty/whitespace-only chunk text
+                if not (chunk_text or "").strip():
+                    continue
+                    
                 chunk_id = f"{repo}:{commit}:{file_path}#{start_line}-{end_line}"
                 
                 chunk = Chunk(
