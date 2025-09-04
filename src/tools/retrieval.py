@@ -235,6 +235,20 @@ class HybridRetriever:
                 # Update score to RRF score
                 result.score = score
                 merged_results.append(result)
+        
+        # Apply filename bonus for likely "overview" files
+        def _name_bonus(path: str) -> float:
+            low = path.lower()
+            if "readme" in low: return 0.08
+            if low.endswith(("package.json", "manifest.json")): return 0.05
+            if any(n in low for n in ("app.", "main.", "index.")): return 0.04
+            return 0.0
+        
+        for r in merged_results:
+            r.score += _name_bonus(r.path)
+        
+        # Re-sort after applying bonuses
+        merged_results.sort(key=lambda x: x.score, reverse=True)
                 
         return merged_results
         

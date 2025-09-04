@@ -72,17 +72,18 @@ def index() -> dict:
     return _orch.index()
 
 
-def ask(query: str) -> dict:
+def ask(query: str, k: int = 50) -> dict:
     """
     Answer a question about the current repository.
     
     Parameters:
         query: The user question.
+        k: Top-k chunks to retrieve (default 50). Use larger k for small repos.
     
     Returns:
         Dictionary with keys: answer, sources (list), token_count, model_used, status (list).
     """
-    return _orch.ask(query, k=12, write_docs=False)
+    return _orch.ask(query, k=int(k), write_docs=False)
 
 
 # ---- Create the root agent ----

@@ -20,7 +20,7 @@ class RAGAnswererAgent:
         """
         self.retriever = retriever
     
-    def answer(self, query: str, k: int = 12, write_docs: bool = False) -> dict:
+    def answer(self, query: str, k: int = 50, write_docs: bool = False) -> dict:
         """Answer a query using the retriever.
         
         Args:
@@ -153,7 +153,7 @@ class OrchestratorAgent:
         result["status"] = status
         return result
 
-    def ask(self, query: str, k: int = 12, write_docs: bool = False) -> dict:
+    def ask(self, query: str, k: int = 50, write_docs: bool = False) -> dict:
         """Ask a query using RAG.
         
         Args:
@@ -175,6 +175,16 @@ class OrchestratorAgent:
             _ = self.index()
             retriever = self.storage_factory.session_store().get_retriever(self.session_id)
             assert retriever is not None, "Indexing failed"
+        
+        # If the repo is tiny, expand k to cover all chunks
+        try:
+            total_chunks = len(self.chunks or [])
+            if total_chunks and total_chunks <= 120 and k < total_chunks:
+                status.append(f"small repo detected ({total_chunks} chunks) → expanding k to {total_chunks}")
+                k = total_chunks
+        except Exception:
+            pass
+        
         rag = RAGAnswererAgent(retriever)
         out = rag.answer(query, k=k, write_docs=write_docs)
         out["status"] = status + ["answer ready"]
