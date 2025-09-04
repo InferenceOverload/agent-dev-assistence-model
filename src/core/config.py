@@ -38,6 +38,10 @@ class VectorSearchConfig(BaseModel):
     vvs_endpoint: str = Field(default_factory=lambda: os.getenv("VVS_ENDPOINT", ""))  # e.g., projects/.../locations/.../indexes/...
     vvs_namespace_mode: str = Field(default_factory=lambda: os.getenv("VVS_NAMESPACE_MODE", "session"))  # "session" or "commit"
     vvs_upsert_batch: int = Field(default=256)
+    # Policy overrides for testing VVS
+    vvs_force: bool = Field(default_factory=lambda: os.getenv("VVS_FORCE", "0") in ("1", "true", "TRUE", "yes", "YES"))
+    vvs_min_files: int = Field(default_factory=lambda: int(os.getenv("VVS_MIN_FILES", "1200")))
+    vvs_min_chunks: int = Field(default_factory=lambda: int(os.getenv("VVS_MIN_CHUNKS", "10000")))
     
 
 class RallyConfig(BaseModel):

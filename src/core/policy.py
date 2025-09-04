@@ -8,6 +8,7 @@ from typing import List
 from pydantic import BaseModel
 
 from ..tools.sizer import SizerReport
+from .config import get_config
 
 
 class VectorizationDecision(BaseModel):
@@ -75,10 +76,16 @@ def decide_vectorization(
         )
     
     # Rule B: Decide backend (only if using embeddings)
-    # Auto-switch thresholds for Vertex Vector Search
-    if s.file_count >= 1200 or s.vector_count_estimate >= 10_000:
+    config = get_config()
+    
+    # Forced VVS (testing/ops override)
+    if config.vector_search.vvs_force:
         backend = "vertex_vector_search"
-        reasons.append(f"Large repo (files={s.file_count}, chunks={s.vector_count_estimate}) → use Vertex Vector Search")
+        reasons.append("VVS_FORCE=true via environment override")
+    # Auto-switch thresholds for Vertex Vector Search (configurable)
+    elif s.file_count >= config.vector_search.vvs_min_files or s.vector_count_estimate >= config.vector_search.vvs_min_chunks:
+        backend = "vertex_vector_search"
+        reasons.append(f"Large repo (files={s.file_count}≥{config.vector_search.vvs_min_files} or chunks={s.vector_count_estimate}≥{config.vector_search.vvs_min_chunks}) → use Vertex Vector Search")
     elif s.vector_count_estimate >= 50_000:
         backend = "vertex_vector_search"
         reasons.append(f"Large vector count: {s.vector_count_estimate:,} vectors >= 50,000 requires Vertex")

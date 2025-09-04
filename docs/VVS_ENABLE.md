@@ -32,6 +32,21 @@ Vertex Vector Search (VVS) provides a scalable, managed vector similarity search
    ```
    This upserts 3 test vectors and queries them to verify the deployment works.
 
+## Forcing VVS or Lowering Thresholds (for demos/tests)
+
+You can override the policy without code changes:
+
+```bash
+# Force VVS regardless of repo size
+export VVS_FORCE=1
+
+# Or lower the auto-switch thresholds
+export VVS_MIN_FILES=50
+export VVS_MIN_CHUNKS=500
+```
+
+These only affect runtime behavior; defaults remain (files≥1200 or chunks≥10000).
+
 ## Manual Setup Steps
 
 ### 1) Provision Vector Search resources
