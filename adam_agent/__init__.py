@@ -93,10 +93,41 @@ root_agent = Agent(
     description="Repo analysis & RAG helper",
     instruction=(
         "You are a repo analysis assistant. "
-        "Always use tools to ground your answers. "
+        "Always gather EVIDENCE before answering. "
+        "Call collect_evidence(query,k) or repo_synopsis() first, then synthesize an answer ONLY from that evidence. "
         "When the user provides a repository URL, call load_repo(url) first. "
         "Before answering repo questions, call ingest -> decide -> index. "
         "Do NOT answer from prior knowledge; rely on tool outputs."
     ),
     tools=[load_repo, ingest, decide, index, ask],
 )
+
+
+def collect_evidence(query: str, k: int = 50) -> dict:
+    """
+    Return a doc-pack (paths, line ranges, excerpts) for the given query from the indexed repo.
+    
+    Parameters:
+        query: Search query for finding relevant code.
+        k: Number of results to retrieve (default 50).
+    
+    Returns:
+        Dictionary with doc_pack containing relevant code snippets.
+    """
+    return _orch.collect_evidence(query=query, k=int(k))
+
+
+def repo_synopsis() -> dict:
+    """
+    Return a merged evidence pack assembled from several seeded queries.
+    
+    Queries overview, entrypoint, routing, and dependencies to build comprehensive context.
+    
+    Returns:
+        Dictionary with doc_pack containing key repository information.
+    """
+    return _orch.repo_synopsis()
+
+
+# Add the new tools to the agent
+root_agent.tools.extend([collect_evidence, repo_synopsis])

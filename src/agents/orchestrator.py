@@ -68,6 +68,44 @@ class RAGAnswererAgent:
             response["docs_file"] = str(docs_path)
         
         return response
+    
+    def collect(self, query: str, k: int = 50, max_tokens: int = 60000) -> dict:
+        """Return only the evidence (doc_pack) for the given query — no answer synthesis.
+        
+        Args:
+            query: Query text
+            k: Number of results to retrieve
+            max_tokens: Maximum tokens in doc pack
+            
+        Returns:
+            Dictionary with query and doc_pack
+        """
+        # Search for relevant chunks
+        results = self.retriever.search(query, k=k)
+        
+        # Build doc pack from results
+        doc_pack = []
+        for result in results:
+            doc_item = {
+                "path": result.path,
+                "score": result.score,
+                "excerpt": result.snippet if hasattr(result, 'snippet') else ""
+            }
+            
+            # Try to get chunk details if available
+            if hasattr(result, 'chunk_id'):
+                # Extract line numbers from chunk_id if in format repo:commit:path#start-end
+                chunk_id = result.chunk_id
+                if '#' in chunk_id:
+                    parts = chunk_id.split('#')
+                    if len(parts) > 1 and '-' in parts[1]:
+                        lines = parts[1].split('-')
+                        doc_item["start_line"] = int(lines[0]) if lines[0].isdigit() else 1
+                        doc_item["end_line"] = int(lines[1]) if len(lines) > 1 and lines[1].isdigit() else doc_item.get("start_line", 1)
+            
+            doc_pack.append(doc_item)
+        
+        return {"query": query, "doc_pack": doc_pack}
 
 
 class OrchestratorAgent:
@@ -189,3 +227,71 @@ class OrchestratorAgent:
         out = rag.answer(query, k=k, write_docs=write_docs)
         out["status"] = status + ["answer ready"]
         return out
+    
+    def collect_evidence(self, query: str, k: int = 50) -> dict:
+        """Return a doc-pack for a query, using the current retriever.
+        
+        Args:
+            query: Query text
+            k: Number of results to retrieve
+            
+        Returns:
+            Dictionary with query, doc_pack and status
+        """
+        retriever = self.storage_factory.session_store().get_retriever(self.session_id)
+        if retriever is None:
+            # Auto-index if needed
+            if self.code_map is None:
+                self.ingest()
+            if self.decision is None:
+                self.size_and_decide()
+            self.index()
+            retriever = self.storage_factory.session_store().get_retriever(self.session_id)
+            assert retriever is not None, "Indexing failed"
+        
+        rag = RAGAnswererAgent(retriever)
+        out = rag.collect(query=query, k=k)
+        out["status"] = [f"collected evidence for: {query[:80]} (k={k})"]
+        return out
+    
+    def repo_synopsis(self) -> dict:
+        """Seeded evidence useful for 'what does this app do?'.
+        
+        Queries: overview, entrypoint, routing/pages, configuration/dependencies.
+        
+        Returns:
+            Dictionary with merged doc_pack and status
+        """
+        retriever = self.storage_factory.session_store().get_retriever(self.session_id)
+        if retriever is None:
+            # Auto-index if needed
+            if self.code_map is None:
+                self.ingest()
+            if self.decision is None:
+                self.size_and_decide()
+            self.index()
+            retriever = self.storage_factory.session_store().get_retriever(self.session_id)
+            assert retriever is not None, "Indexing failed"
+        
+        rag = RAGAnswererAgent(retriever)
+        seeds = [
+            "project overview purpose goals readme",
+            "main entry file app startup bootstrapping",
+            "routing pages endpoints components controllers",
+            "dependencies configuration package json requirements manifest settings",
+        ]
+        packs, total = [], 0
+        for q in seeds:
+            ev = rag.collect(query=q, k=40)
+            packs.extend(ev.get("doc_pack", []))
+            total += len(ev.get("doc_pack", []))
+        
+        # Remove duplicates based on path
+        seen_paths = set()
+        unique_packs = []
+        for item in packs:
+            if item["path"] not in seen_paths:
+                seen_paths.add(item["path"])
+                unique_packs.append(item)
+        
+        return {"doc_pack": unique_packs, "status": [f"repo_synopsis collected {total} snippets from {len(seeds)} seeded queries"]}
