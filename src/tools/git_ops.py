@@ -9,6 +9,30 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+def sanitize_branch_name(name: str) -> str:
+    """Sanitize a string to be a valid git branch name.
+    
+    Args:
+        name: Raw string to sanitize
+    
+    Returns:
+        Valid git branch name
+    """
+    import re
+    # Remove leading/trailing whitespace
+    name = name.strip()
+    # Replace spaces and special chars with hyphens (including forward slashes)
+    name = re.sub(r'[^a-zA-Z0-9\-_]', '-', name)
+    # Remove consecutive hyphens
+    name = re.sub(r'-+', '-', name)
+    # Remove leading/trailing hyphens
+    name = name.strip('-')
+    # Limit length
+    if len(name) > 50:
+        name = name[:50].rstrip('-')
+    return name or 'feature'
+
+
 def create_patch(old_content: str, new_content: str, file_path: str) -> str:
     """Create a unified diff patch.
     

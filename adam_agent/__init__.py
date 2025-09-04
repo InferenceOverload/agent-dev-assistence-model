@@ -11,6 +11,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.agents.orchestrator import OrchestratorAgent
 from src.core.storage import StorageFactory
+from src.agents.codegen_stub import codegen_stub, pr_draft_stub
 
 # Initialize a shared orchestrator instance
 _orch = OrchestratorAgent(
@@ -18,6 +19,10 @@ _orch = OrchestratorAgent(
     session_id="adk",
     storage_factory=StorageFactory(use_vertex=False)
 )
+
+# Simple in-process session cache for last planning outputs
+_last_stories = None
+_last_devplan = None
 
 
 # ---- Tools exposed to ADK ----
@@ -181,3 +186,128 @@ def summarize_repo() -> dict:
 
 # Make the tool discoverable
 root_agent.tools.append(summarize_repo)
+
+
+def plan(requirement: str) -> dict:
+    """
+    Create Rally stories from a requirement.
+    
+    Parameters:
+        requirement: Plain text requirement description.
+    
+    Returns:
+        Dictionary with stories list and status.
+    """
+    status = ["plan: creating stories from requirement"]
+    
+    # Stub implementation - creates simple story structure
+    stories = [{
+        "title": f"Implement: {requirement[:50]}",
+        "description": requirement,
+        "acceptance_criteria": ["Feature works as described", "Tests pass"],
+        "impacted_paths": ["src/features/new_feature.py", "tests/test_feature.py"]
+    }]
+    
+    out = {"stories": stories, "status": status + ["stories ready"]}
+    
+    # Cache for downstream tools
+    global _last_stories
+    _last_stories = out["stories"]
+    
+    return out
+
+
+def dev_pr() -> dict:
+    """
+    Create development plan from last stories.
+    
+    Returns:
+        Dictionary with branch, tests, and impacted paths.
+    """
+    status = ["dev_pr: creating development plan"]
+    
+    # Use cached stories or create default
+    stories = _last_stories if _last_stories else [{
+        "title": "Default feature",
+        "impacted_paths": ["src/main.py"]
+    }]
+    
+    # Create simple dev plan
+    plan = {
+        "branch": "feat/auto-generated",
+        "impacted_paths": stories[0].get("impacted_paths", []),
+        "tests": ["test_new_feature"],
+        "notes": ["Development plan generated from stories"]
+    }
+    
+    status.append(f"branch: {plan['branch']}")
+    plan["status"] = status + ["dev/pr plan ready"]
+    
+    # Cache for downstream tools
+    global _last_devplan
+    _last_devplan = plan
+    
+    return plan
+
+
+def gen_code(story: str, devplan: str) -> dict:
+    """
+    Build a ProposedPatch from StorySpec + DevPlan JSON strings.
+    
+    Parameters:
+        story: JSON string with fields {title, impacted_paths}.
+        devplan: JSON string with fields {branch, impacted_paths, tests}.
+    
+    Returns:
+        Dictionary with patch and status.
+    """
+    status = ["gen_code: starting"]
+    patch = codegen_stub(story_json=story, devplan_json=devplan)
+    status.append(f"generated patch for branch {patch.branch} with {len(patch.files)} files")
+    out = {"patch": patch.model_dump(), "status": status}
+    return out
+
+
+def gen_code_from_session() -> dict:
+    """
+    Use last stories + dev plan stored in session to generate a ProposedPatch.
+    
+    Returns:
+        Dictionary with patch or error and status.
+    """
+    status = ["gen_code_from_session: starting"]
+    
+    if not _last_stories:
+        return {"error": "No cached stories. Run plan(requirement=...) first.", "status": status}
+    if not _last_devplan:
+        return {"error": "No cached dev plan. Run dev_pr() first.", "status": status}
+    
+    # Choose the first story for the stub
+    import json
+    story_json = json.dumps(_last_stories[0])
+    devplan_json = json.dumps(_last_devplan)
+    
+    patch = codegen_stub(story_json=story_json, devplan_json=devplan_json)
+    status.append(f"generated patch for branch {patch.branch} with {len(patch.files)} files")
+    
+    return {"patch": patch.model_dump(), "status": status}
+
+
+def pr_draft(patch: str) -> dict:
+    """
+    Build a PRDraft from a ProposedPatch JSON string.
+    
+    Parameters:
+        patch: JSON string with ProposedPatch data.
+    
+    Returns:
+        Dictionary with pr and status.
+    """
+    status = ["pr_draft: starting"]
+    draft = pr_draft_stub(patch_json=patch)
+    status.append(f"drafted PR for branch {draft.branch}")
+    return {"pr": draft.model_dump(), "status": status}
+
+
+# Add new tools to the agent
+root_agent.tools.extend([plan, dev_pr, gen_code, gen_code_from_session, pr_draft])
