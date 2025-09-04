@@ -92,12 +92,29 @@ root_agent = Agent(
     model="gemini-2.0-flash-exp",  # Use stable flash experimental model
     description="Repo analysis & RAG helper",
     instruction=(
-        "You are a repo analysis assistant. "
-        "Always gather EVIDENCE before answering. "
-        "Call collect_evidence(query,k) or repo_synopsis() first, then synthesize an answer ONLY from that evidence. "
-        "When the user provides a repository URL, call load_repo(url) first. "
-        "Before answering repo questions, call ingest -> decide -> index. "
-        "Do NOT answer from prior knowledge; rely on tool outputs."
+        "You are a repository analysis assistant for software architects.\n"
+        "\n"
+        "MANDATORY WORKFLOW:\n"
+        "1) Always gather EVIDENCE before answering: call summarize_repo() or collect_evidence(query,k) first.\n"
+        "2) Synthesize ONLY from tool outputs (doc_pack excerpts + file paths). Do NOT rely on prior knowledge.\n"
+        "\n"
+        "SYNTHESIS RUBRIC (when asked about 'what this app does' or similar):\n"
+        "• Purpose & Overview — a 2–4 sentence plain-language summary of what the app is for.\n"
+        "• Architecture — key components and how they interact (frontend, backend, data access, APIs).\n"
+        "• Entry Points — primary startup files, routes/pages, CLI, services (cite source paths).\n"
+        "• Data & Integrations — where state/data lives (DB/files/APIs) and references to config.\n"
+        "• Dependencies — frameworks/libraries that define the shape of the app.\n"
+        "• How to Run — inferred local run/build steps if evidence shows scripts/config.\n"
+        "• Gaps / Unknowns — call out anything missing or ambiguous in the evidence.\n"
+        "• Next Steps — suggest 3–5 focused questions or checks to validate understanding.\n"
+        "\n"
+        "OPERATIONAL NOTES:\n"
+        "• Cite sources inline as bullet items with file:line ranges from the doc_pack.\n"
+        "• Prefer concise, well-structured bullet lists over long prose.\n"
+        "• If the repo is tiny, include all relevant excerpts; otherwise keep context lean.\n"
+        "• When the user provides a repository URL, call load_repo(url) first. Then ingest → decide → index.\n"
+        "• For counting/listing code elements, you may use code_query(globs, regexes) as needed.\n"
+        "• For requirements, later call plan(requirement=...) and then dev_pr()."
     ),
     tools=[load_repo, ingest, decide, index, ask],
 )
@@ -131,3 +148,36 @@ def repo_synopsis() -> dict:
 
 # Add the new tools to the agent
 root_agent.tools.extend([collect_evidence, repo_synopsis])
+
+
+def summarize_repo() -> dict:
+    """
+    Gather a synthesis-ready bundle for architect-grade repository summaries.
+    
+    Combines evidence from multiple seeded queries with recommended outline structure.
+    
+    Returns:
+        Dictionary with doc_pack (evidence), outline (section headings), and status.
+    """
+    status = ["summarize_repo: collecting evidence via repo_synopsis()"]
+    bundle = _orch.repo_synopsis()
+    outline = [
+        "Purpose & Overview",
+        "Architecture", 
+        "Entry Points",
+        "Data & Integrations",
+        "Dependencies",
+        "How to Run",
+        "Gaps / Unknowns",
+        "Next Steps",
+    ]
+    out = {
+        "doc_pack": bundle.get("doc_pack", []),
+        "outline": outline,
+        "status": status + bundle.get("status", []),
+    }
+    return out
+
+
+# Make the tool discoverable
+root_agent.tools.append(summarize_repo)
