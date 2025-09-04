@@ -14,6 +14,9 @@ from src.core.storage import StorageFactory
 from src.agents.codegen_stub import codegen_stub, pr_draft_stub
 from src.tools.path_resolver import resolve_paths
 from src.tools.diagram import mermaid_repo_tree
+from src.analysis.scan import analyze_repo
+from src.analysis.models import RepoFacts
+from src.tools.diagram_components import mermaid_components
 
 # Initialize a shared orchestrator instance
 _orch = OrchestratorAgent(
@@ -108,6 +111,7 @@ root_agent = Agent(
         "SYNTHESIS RUBRIC (when asked about 'what this app does' or similar):\n"
         "• Purpose & Overview — a 2–4 sentence plain-language summary of what the app is for.\n"
         "• Architecture — key components and how they interact (frontend, backend, data access, APIs).\n"
+        "  - ENHANCE with analyze_repo_tool() to identify components and relations automatically\n"
         "• Entry Points — primary startup files, routes/pages, CLI, services (cite source paths).\n"
         "• Data & Integrations — where state/data lives (DB/files/APIs) and references to config.\n"
         "• Dependencies — frameworks/libraries that define the shape of the app.\n"
@@ -120,6 +124,8 @@ root_agent = Agent(
         "• Prefer concise, well-structured bullet lists over long prose.\n"
         "• If the repo is tiny, include all relevant excerpts; otherwise keep context lean.\n"
         "• When the user provides a repository URL, call load_repo(url) first. Then ingest → decide → index.\n"
+        "• For architectural insights, use analyze_repo_tool() to extract RepoFacts (components, relations, frameworks).\n"
+        "• For visual diagrams, use arch_diagram_plus() for component relationships or arch_diagram() for file structure.\n"
         "• For counting/listing code elements, you may use code_query(globs, regexes) as needed.\n"
         "• For requirements, prefer deliver_pr(requirement=...) to produce an end-to-end PR draft automatically.\n"
         "\n"
@@ -395,4 +401,72 @@ def arch_diagram() -> dict:
     return {"mermaid": mermaid, "status": [f"arch_diagram: {len(files)} files"]}
 
 
-root_agent.tools.extend([arch_diagram])
+# Cache for RepoFacts
+_cached_facts = None
+
+
+def analyze_repo_tool() -> dict:
+    """
+    Analyze repository to extract facts, components, and relationships.
+    
+    Returns:
+        Dictionary with RepoFacts data and status.
+    """
+    global _cached_facts
+    status = ["analyze_repo: scanning repository"]
+    
+    # Use orchestrator's root and code_map
+    root = _orch.root if _orch else "."
+    code_map = _orch.code_map if _orch else None
+    
+    # Analyze and cache facts
+    facts = analyze_repo(root, code_map)
+    _cached_facts = facts
+    
+    # Build summary
+    status.append(f"found {len(facts.components)} components")
+    status.append(f"found {len(facts.relations)} relations")
+    status.append(f"languages: {', '.join(facts.languages.keys())}")
+    
+    return {
+        "facts": facts.model_dump(),
+        "status": status
+    }
+
+
+def arch_diagram_plus() -> dict:
+    """
+    Generate enhanced Mermaid component diagram with relationships.
+    Uses cached RepoFacts or analyzes if needed.
+    
+    Returns:
+        Dictionary with component mermaid diagram and status.
+    """
+    global _cached_facts
+    status = ["arch_diagram_plus: generating component diagram"]
+    
+    # Use cached facts or analyze
+    if not _cached_facts:
+        root = _orch.root if _orch else "."
+        code_map = _orch.code_map if _orch else None
+        _cached_facts = analyze_repo(root, code_map)
+        status.append("analyzed repository")
+    
+    # Generate component diagram
+    mermaid = mermaid_components(_cached_facts)
+    
+    status.append(f"diagram with {len(_cached_facts.components)} components")
+    
+    return {
+        "mermaid": mermaid,
+        "facts_summary": {
+            "components": len(_cached_facts.components),
+            "relations": len(_cached_facts.relations),
+            "frameworks": _cached_facts.frameworks,
+            "databases": _cached_facts.databases
+        },
+        "status": status
+    }
+
+
+root_agent.tools.extend([arch_diagram, analyze_repo_tool, arch_diagram_plus])
