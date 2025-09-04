@@ -135,7 +135,8 @@ class TestDecideVectorization:
         
         assert decision.use_embeddings is True
         assert decision.backend == "vertex_vector_search"
-        assert "Large vector count: 50,000 vectors >= 50,000 requires Vertex" in decision.reasons
+        # Updated to match new logic
+        assert any("use Vertex Vector Search" in r for r in decision.reasons)
     
     def test_large_bytes_triggers_vertex(self):
         """Test that bytes_total >= 1.5GB triggers Vertex backend."""
@@ -164,10 +165,11 @@ class TestDecideVectorization:
         assert "High concurrency: 3 sessions + 20,000 vectors requires Vertex" in decision.reasons
     
     def test_high_concurrency_low_vectors_stays_memory(self):
-        """Test that high concurrency alone doesn't trigger Vertex if vectors < 20,000."""
+        """Test that very small vector count stays in memory."""
         s = create_minimal_sizer_report(
             loc_total=80000,  # Trigger embeddings first
-            vector_count_estimate=19999  # Just below threshold
+            vector_count_estimate=5000,  # Below new 10,000 threshold
+            file_count=100  # Below 1200 threshold
         )
         
         decision = decide_vectorization(s, expected_concurrent_sessions=5)
@@ -226,10 +228,11 @@ class TestDecideVectorization:
         decision = decide_vectorization(s)
         assert decision.backend == "vertex_vector_search"
         
-        # Test just below Vertex threshold
+        # Test just below NEW Vertex threshold (10,000)
         s = create_minimal_sizer_report(
             loc_total=80000,  # Trigger embeddings
-            vector_count_estimate=49999
+            vector_count_estimate=9999,  # Just below 10,000 threshold
+            file_count=100  # Below 1200 threshold
         )
         decision = decide_vectorization(s)
         assert decision.backend == "in_memory"

@@ -1,8 +1,9 @@
 from __future__ import annotations
 from abc import ABC, abstractmethod
-from typing import Any, Sequence
+from typing import Any, Sequence, Optional
 from pydantic import BaseModel
 from .types import Chunk, CodeMap
+from .config import get_config
 
 # --- Session store contracts ---
 class SessionStore(ABC):
@@ -92,3 +93,19 @@ class StorageFactory(BaseModel):
         if self._vector_store is None:
             self._vector_store = VertexVectorStore(dim=self.dim) if self.use_vertex else InMemoryVectorStore()
         return self._vector_store
+    
+    def vvs(self) -> Optional[Any]:
+        """Get Vertex Vector Store client if configured."""
+        config = get_config()
+        if not (self.use_vertex or config.vector_search.vvs_enabled):
+            return None
+        try:
+            from ..tools.vvs_store import VertexVectorStore as VVS, VVSNotConfigured
+            return VVS(
+                project=config.vector_search.vvs_project,
+                location=config.vector_search.vvs_location,
+                index=config.vector_search.vvs_index,
+                endpoint=config.vector_search.vvs_endpoint,
+            )
+        except Exception:
+            return None

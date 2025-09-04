@@ -36,6 +36,8 @@ class HybridRetriever:
             "file_count": 0,
             "chunk_count": 0,
         }
+        # Optional external ANN provider: function (qv, topk) -> List[(chunk_index, score)]
+        self.ann_provider = None  # set by indexer when using VVS
         
     def bm25_index_chunks(self, chunks: List[Chunk]) -> None:
         """Build BM25 index from chunks.
@@ -187,6 +189,63 @@ class HybridRetriever:
         
     def _hybrid_search(self, query_text: str, k: int, expand_neighbors: bool) -> List[RetrievalResult]:
         """Hybrid search combining BM25 and vector search."""
+        # If we have an external ANN provider (e.g., VVS), use it for candidate generation
+        if self.ann_provider is not None:
+            # Get query embedding
+            if self.embeddings:
+                try:
+                    qv = self.embeddings.get_embeddings([query_text], dim=768)[0]
+                except Exception:
+                    qv = None
+            else:
+                qv = None
+                
+            if qv is not None:
+                # External ANN gives us candidate indices & scores; fuse with BM25
+                try:
+                    ext = self.ann_provider(qv, max(k * 5, 100))
+                    # BM25 on candidates
+                    bm25_results = []
+                    vector_results = []
+                    for idx, score in ext:
+                        if idx < len(self.chunks):
+                            chunk = self.chunks[idx]
+                            result = RetrievalResult(
+                                chunk_id=chunk.id,
+                                path=chunk.path,
+                                score=float(score),
+                                neighbors=chunk.neighbors.copy(),
+                                snippet=self._get_snippet(chunk.text, query_text)
+                            )
+                            vector_results.append(result)
+                    
+                    # Also get BM25 results for same candidates
+                    if self.bm25_index:
+                        tokens = self._tokenize(query_text)
+                        bm25_scores = self.bm25_index.get_scores(tokens)
+                        for idx, score in ext[:k * 2]:
+                            if idx < len(self.chunks) and idx < len(bm25_scores):
+                                if bm25_scores[idx] > 0:
+                                    chunk = self.chunks[idx]
+                                    result = RetrievalResult(
+                                        chunk_id=chunk.id,
+                                        path=chunk.path,
+                                        score=float(bm25_scores[idx]),
+                                        neighbors=chunk.neighbors.copy(),
+                                        snippet=self._get_snippet(chunk.text, query_text)
+                                    )
+                                    bm25_results.append(result)
+                    
+                    # Merge using reciprocal rank fusion
+                    if vector_results or bm25_results:
+                        merged_results = self.reciprocal_rank_fusion(vector_results, bm25_results, k=60)
+                        if expand_neighbors:
+                            merged_results = self._expand_with_neighbors(merged_results, k)
+                        return merged_results[:k]
+                except Exception:
+                    pass  # Fall back to local search
+        
+        # Fall back to local hybrid pipeline
         # Get results from both methods
         bm25_results = self._bm25_search(query_text, k * 2, False)
         vector_results = self._vector_search(query_text, k * 2, False) if self.vectors else []

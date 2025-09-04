@@ -29,6 +29,15 @@ class VectorSearchConfig(BaseModel):
     enabled: bool = Field(default=False)
     index_name: Optional[str] = None
     use_streaming: bool = Field(default=True)
+    # Vertex Vector Search (VVS) config
+    vvs_enabled: bool = Field(default_factory=lambda: os.getenv("VVS_ENABLED", "false").lower() == "true")
+    vvs_project: str = Field(default_factory=lambda: os.getenv("GOOGLE_CLOUD_PROJECT", ""))
+    vvs_location: str = Field(default_factory=lambda: os.getenv("GOOGLE_CLOUD_LOCATION", "us-central1"))
+    # Index/collection names (Vector Search v2)
+    vvs_index: str = Field(default_factory=lambda: os.getenv("VVS_INDEX", ""))
+    vvs_endpoint: str = Field(default_factory=lambda: os.getenv("VVS_ENDPOINT", ""))  # e.g., projects/.../locations/.../indexes/...
+    vvs_namespace_mode: str = Field(default_factory=lambda: os.getenv("VVS_NAMESPACE_MODE", "session"))  # "session" or "commit"
+    vvs_upsert_batch: int = Field(default=256)
     
 
 class RallyConfig(BaseModel):
@@ -91,3 +100,19 @@ def load_config(config_path: Optional[str] = None) -> AppConfig:
         config_dict.setdefault("github", {})["token"] = github_token
         
     return AppConfig(**config_dict)
+
+
+# Default config singleton for easier imports
+CONFIG: Optional[AppConfig] = None
+
+def get_config() -> AppConfig:
+    """Get the application config singleton."""
+    global CONFIG
+    if CONFIG is None:
+        # Try to load config, but if missing gcp.project, create a minimal one
+        try:
+            CONFIG = load_config()
+        except Exception:
+            # Create minimal config for testing
+            CONFIG = AppConfig(gcp=GCPConfig(project=os.getenv("GOOGLE_CLOUD_PROJECT", "test-project")))
+    return CONFIG

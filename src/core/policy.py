@@ -75,7 +75,11 @@ def decide_vectorization(
         )
     
     # Rule B: Decide backend (only if using embeddings)
-    if s.vector_count_estimate >= 50_000:
+    # Auto-switch thresholds for Vertex Vector Search
+    if s.file_count >= 1200 or s.vector_count_estimate >= 10_000:
+        backend = "vertex_vector_search"
+        reasons.append(f"Large repo (files={s.file_count}, chunks={s.vector_count_estimate}) → use Vertex Vector Search")
+    elif s.vector_count_estimate >= 50_000:
         backend = "vertex_vector_search"
         reasons.append(f"Large vector count: {s.vector_count_estimate:,} vectors >= 50,000 requires Vertex")
     
