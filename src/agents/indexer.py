@@ -53,6 +53,12 @@ def index_repo(
     # Index chunks and vectors
     retriever.index_chunks(chunks, vectors)
     
+    # Build file-level summaries for hierarchical retrieval
+    try:
+        retriever.build_file_summaries(lambda xs: embed_texts(xs, dim=embed_dim))
+    except Exception:
+        pass
+    
     # Store retriever in session store
     storage_factory.session_store().put_retriever(session_id, retriever)
     
@@ -62,5 +68,7 @@ def index_repo(
     return {
         "session_id": session_id,
         "vector_count": len(vectors),
-        "backend": "vertex_vector_search" if storage_factory.use_vertex else "in_memory"
+        "backend": "vertex_vector_search" if storage_factory.use_vertex else "in_memory",
+        "file_count": retriever.meta.get("file_count", 0),
+        "chunk_count": retriever.meta.get("chunk_count", 0),
     }

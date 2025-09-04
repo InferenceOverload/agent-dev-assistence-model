@@ -31,8 +31,28 @@ class RAGAnswererAgent:
         Returns:
             Answer dictionary with sources
         """
-        # Search for relevant chunks
-        results = self.retriever.search(query, k=k)
+        # Auto-switch to hierarchical for large repos
+        try:
+            file_count = int(getattr(self.retriever, "meta", {}).get("file_count", 0))
+            chunk_count = int(getattr(self.retriever, "meta", {}).get("chunk_count", 0))
+        except (TypeError, ValueError):
+            file_count = 0
+            chunk_count = 0
+        status_note = None
+        
+        if file_count >= 500 or chunk_count >= 6000:
+            try:
+                from ..tools.embeddings import embed_texts
+                results = self.retriever.search_hierarchical(
+                    query, 
+                    embed_query_fn=lambda xs: embed_texts(xs, dim=768),
+                    k=k, k_files=50, k_chunks_per_file=3
+                )
+                status_note = f"hierarchical: {file_count} files, {chunk_count} chunks → top 50 files, 3 chunks/file"
+            except Exception:
+                results = self.retriever.search(query, k=k)
+        else:
+            results = self.retriever.search(query, k=k)
         
         if not results:
             return {
@@ -56,6 +76,8 @@ class RAGAnswererAgent:
             "token_count": len(answer) // 4,  # Rough estimate
             "model_used": "simple"
         }
+        if status_note:
+            response["status_note"] = status_note
         
         # Write docs if requested
         if write_docs:
@@ -80,8 +102,28 @@ class RAGAnswererAgent:
         Returns:
             Dictionary with query and doc_pack
         """
-        # Search for relevant chunks
-        results = self.retriever.search(query, k=k)
+        # Auto-switch to hierarchical for large repos
+        try:
+            file_count = int(getattr(self.retriever, "meta", {}).get("file_count", 0))
+            chunk_count = int(getattr(self.retriever, "meta", {}).get("chunk_count", 0))
+        except (TypeError, ValueError):
+            file_count = 0
+            chunk_count = 0
+        status_note = None
+        
+        if file_count >= 500 or chunk_count >= 6000:
+            try:
+                from ..tools.embeddings import embed_texts
+                results = self.retriever.search_hierarchical(
+                    query,
+                    embed_query_fn=lambda xs: embed_texts(xs, dim=768),
+                    k=k, k_files=50, k_chunks_per_file=3
+                )
+                status_note = f"hierarchical: {file_count} files, {chunk_count} chunks → top 50 files, 3 chunks/file"
+            except Exception:
+                results = self.retriever.search(query, k=k)
+        else:
+            results = self.retriever.search(query, k=k)
         
         # Build doc pack from results
         doc_pack = []
@@ -105,7 +147,44 @@ class RAGAnswererAgent:
             
             doc_pack.append(doc_item)
         
-        return {"query": query, "doc_pack": doc_pack}
+        # Compress doc pack
+        doc_pack = self.compress_doc_pack(doc_pack, max_lines=400)
+        
+        out = {"query": query, "doc_pack": doc_pack}
+        if status_note:
+            out["status_note"] = status_note
+        return out
+    
+    def compress_doc_pack(self, doc_pack: list, max_lines: int = 400) -> list:
+        """Keep excerpts concise for synthesis.
+        
+        Args:
+            doc_pack: List of doc items
+            max_lines: Maximum total lines
+            
+        Returns:
+            Compressed doc pack
+        """
+        if not doc_pack:
+            return doc_pack
+        MAX_PER = 12
+        seen = set()
+        total = 0
+        out = []
+        for d in doc_pack:
+            ex = (d.get("excerpt") or "").splitlines()
+            key = (d.get("path"), d.get("start_line"), d.get("end_line"), "\n".join(ex[:5]))
+            if key in seen:
+                continue
+            seen.add(key)
+            trimmed = "\n".join(ex[:MAX_PER])
+            kept = {**d, "excerpt": trimmed}
+            lines = len(trimmed.splitlines())
+            if total + lines > max_lines:
+                break
+            total += lines
+            out.append(kept)
+        return out
 
 
 class OrchestratorAgent:

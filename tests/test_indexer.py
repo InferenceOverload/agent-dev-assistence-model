@@ -108,8 +108,10 @@ def test_index_repo_with_chunks(mock_embed_texts):
     assert result["vector_count"] == 2
     assert result["backend"] == "in_memory"
     
-    # Verify embeddings were called correctly
-    mock_embed_texts.assert_called_once_with(
+    # Verify embeddings were called correctly (now called twice - once for chunks, once for file summaries)
+    assert mock_embed_texts.call_count == 2
+    # First call for chunk embeddings
+    mock_embed_texts.assert_any_call(
         ["def hello():\n    return 'world'",
          "function greet() {\n    console.log('hi');\n}"],
         dim=768
@@ -193,8 +195,9 @@ def test_index_repo_different_backend(mock_embed_texts):
     assert result["backend"] == "in_memory" 
     assert result["vector_count"] == 1
     
-    # Verify custom dimension was used
-    mock_embed_texts.assert_called_once_with(
+    # Verify custom dimension was used (now called twice - once for chunks, once for file summaries)
+    assert mock_embed_texts.call_count == 2
+    mock_embed_texts.assert_any_call(
         ["def hello():\n    return 'world'"],
         dim=768
     )

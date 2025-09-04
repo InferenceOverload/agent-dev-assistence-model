@@ -1,6 +1,6 @@
 """Hybrid retrieval with BM25 and vector search."""
 
-from typing import List, Dict, Optional, Any, Tuple
+from typing import List, Dict, Optional, Any, Tuple, Iterable
 import logging
 import re
 from collections import defaultdict
@@ -28,6 +28,14 @@ class HybridRetriever:
         self.chunks: List[Chunk] = []
         self.vectors: List[List[float]] = []
         self._chunk_id_to_index: Dict[str, int] = {}
+        # file-level index (paths -> summary embedding)
+        self.file_index: Dict[str, List[float]] = {}
+        self._file_summaries_text: Dict[str, str] = {}
+        # meta
+        self.meta = {
+            "file_count": 0,
+            "chunk_count": 0,
+        }
         
     def bm25_index_chunks(self, chunks: List[Chunk]) -> None:
         """Build BM25 index from chunks.
@@ -38,6 +46,11 @@ class HybridRetriever:
         logger.info(f"Building BM25 index for {len(chunks)} chunks")
         self.chunks = chunks
         self._chunk_id_to_index = {chunk.id: i for i, chunk in enumerate(chunks)}
+        # Update meta
+        self.meta["chunk_count"] = len(chunks)
+        if chunks:
+            unique_paths = set(chunk.path for chunk in chunks)
+            self.meta["file_count"] = len(unique_paths)
         
         # Tokenize text for BM25
         tokenized_texts = []
@@ -321,3 +334,106 @@ class HybridRetriever:
             snippet += "..."
             
         return snippet
+    
+    # ---------- File summaries & hierarchical search ----------
+    def build_file_summaries(self, embed_fn, max_lines_per_file: int = 120) -> None:
+        """
+        Build short per-file summaries and embed them for file-level retrieval.
+        Uses the first N lines seen across chunks for each file (sorted by start_line).
+        """
+        by_path: Dict[str, List[Tuple[int, str]]] = {}
+        for ch in self.chunks:
+            try:
+                by_path.setdefault(ch.path, []).append((ch.start_line or 0, ch.text or ""))
+            except Exception:
+                by_path.setdefault(ch.path, []).append((0, getattr(ch, "text", "") or ""))
+        texts: List[str] = []
+        paths: List[str] = []
+        for path, parts in by_path.items():
+            parts.sort(key=lambda x: x[0])
+            acc: List[str] = []
+            total = 0
+            for _, t in parts:
+                if not t:
+                    continue
+                lines = t.splitlines()
+                take = max_lines_per_file - total
+                if take <= 0:
+                    break
+                acc.extend(lines[:max(0, take)])
+                total += min(len(lines), take)
+                if total >= max_lines_per_file:
+                    break
+            summary = "\n".join(acc) if acc else ""
+            self._file_summaries_text[path] = summary
+            paths.append(path)
+            texts.append(summary or path)
+        if not texts:
+            return
+        embs = embed_fn(texts)
+        self.file_index = {p: e for p, e in zip(paths, embs)}
+    
+    def search_hierarchical(
+        self,
+        query_text: str,
+        embed_query_fn,
+        k: int = 12,
+        k_files: int = 50,
+        k_chunks_per_file: int = 3,
+    ) -> List[RetrievalResult]:
+        """
+        2-stage search:
+          A) file-level retrieval -> pick top k_files
+          B) restrict chunk candidates to those files, then run normal fusion and take top (k_files*k_chunks_per_file) -> top k
+        """
+        if not self.file_index:
+            # fallback to flat search
+            return self.search(query_text, k=k)
+        qv = embed_query_fn([query_text])[0] if callable(embed_query_fn) else embed_query_fn
+        # A) score files
+        scored_files: List[Tuple[str, float]] = []
+        for p, ev in self.file_index.items():
+            try:
+                scored_files.append((p, self._cosine_similarity(qv, ev)))
+            except Exception:
+                continue
+        scored_files.sort(key=lambda x: x[1], reverse=True)
+        allowed = set([p for p, _ in scored_files[:max(1, k_files)]])
+        # B) restrict candidate chunks to those paths and run existing pipeline with a larger working K
+        working_k = max(k, min(len(allowed) * k_chunks_per_file, 5 * k))
+        return self.search_with_path_filter(query_text, embed_query_fn, k=k, allowed_paths=allowed, working_k=working_k)
+    
+    def search_with_path_filter(self, query_text: str, embed_query_fn, k: int, allowed_paths: set, working_k: int) -> List[RetrievalResult]:
+        """
+        Variant of search() that limits candidate chunks to a path whitelist before fusion.
+        """
+        # Filter chunks to allowed paths
+        filtered_chunks = []
+        filtered_vectors = []
+        filtered_indices = []
+        for i, chunk in enumerate(self.chunks):
+            if chunk.path in allowed_paths:
+                filtered_chunks.append(chunk)
+                if i < len(self.vectors):
+                    filtered_vectors.append(self.vectors[i])
+                filtered_indices.append(i)
+        
+        if not filtered_chunks:
+            return []
+        
+        # Create temporary retriever with filtered data
+        temp_retriever = HybridRetriever(self.embeddings, self.vector_search)
+        temp_retriever.chunks = filtered_chunks
+        temp_retriever.vectors = filtered_vectors
+        temp_retriever._chunk_id_to_index = {chunk.id: i for i, chunk in enumerate(filtered_chunks)}
+        
+        # Build BM25 index for filtered chunks
+        tokenized_texts = []
+        for chunk in filtered_chunks:
+            search_text = f"{chunk.text} {' '.join(chunk.symbols)} {chunk.path}"
+            tokens = temp_retriever._tokenize(search_text)
+            tokenized_texts.append(tokens)
+        temp_retriever.bm25_index = BM25Okapi(tokenized_texts)
+        
+        # Run search on filtered data
+        return temp_retriever.search(query_text, k=k, expand_neighbors=True)
