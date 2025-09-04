@@ -12,6 +12,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src.agents.orchestrator import OrchestratorAgent
 from src.core.storage import StorageFactory
 from src.agents.codegen_stub import codegen_stub, pr_draft_stub
+from src.tools.path_resolver import resolve_paths
 
 # Initialize a shared orchestrator instance
 _orch = OrchestratorAgent(
@@ -119,7 +120,7 @@ root_agent = Agent(
         "• If the repo is tiny, include all relevant excerpts; otherwise keep context lean.\n"
         "• When the user provides a repository URL, call load_repo(url) first. Then ingest → decide → index.\n"
         "• For counting/listing code elements, you may use code_query(globs, regexes) as needed.\n"
-        "• For requirements, later call plan(requirement=...) and then dev_pr()."
+        "• For requirements, prefer deliver_pr(requirement=...) to produce an end-to-end PR draft automatically."
     ),
     tools=[load_repo, ingest, decide, index, ask],
 )
@@ -311,3 +312,50 @@ def pr_draft(patch: str) -> dict:
 
 # Add new tools to the agent
 root_agent.tools.extend([plan, dev_pr, gen_code, gen_code_from_session, pr_draft])
+
+
+def deliver_pr(requirement: str) -> dict:
+    """
+    End-to-end orchestration:
+      1) plan(requirement) -> stories
+      2) dev_pr() -> dev plan
+      3) normalize impacted_paths against actual repo files
+      4) gen_code_from_session() -> ProposedPatch
+      5) pr_draft(patch) -> PRDraft
+    Returns: {"stories":[...], "devplan":{...}, "patch":{...}, "pr":{...}, "status":[...]}
+    """
+    status = [f"deliver_pr: {requirement[:120]}"]
+    # 1) plan
+    p = plan(requirement)
+    status += p.get("status", [])
+    stories = p.get("stories", [])
+    # 2) dev plan
+    d = dev_pr()
+    status += d.get("status", [])
+    # 3) normalize impacted paths
+    try:
+        repo_files = _orch.code_map.files if _orch.code_map else []
+    except Exception:
+        repo_files = []
+    # fix stories
+    for s in stories or []:
+        s["impacted_paths"] = resolve_paths(s.get("impacted_paths", []), repo_files)
+    # fix dev plan
+    if isinstance(d, dict):
+        paths = d.get("impacted_paths") or []
+        d["impacted_paths"] = resolve_paths(paths, repo_files)
+    # cache fixed dev plan
+    global _last_devplan
+    _last_devplan = d
+    # 4) codegen
+    g = gen_code_from_session()
+    status += g.get("status", [])
+    patch = g.get("patch", {})
+    # 5) pr draft
+    import json
+    pr = pr_draft(json.dumps(patch))
+    status += pr.get("status", [])
+    return {"stories": stories, "devplan": d, "patch": patch, "pr": pr.get("pr"), "status": status}
+
+
+root_agent.tools.extend([deliver_pr])
