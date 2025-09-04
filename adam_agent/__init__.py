@@ -13,6 +13,7 @@ from src.agents.orchestrator import OrchestratorAgent
 from src.core.storage import StorageFactory
 from src.agents.codegen_stub import codegen_stub, pr_draft_stub
 from src.tools.path_resolver import resolve_paths
+from src.tools.diagram import mermaid_repo_tree
 
 # Initialize a shared orchestrator instance
 _orch = OrchestratorAgent(
@@ -380,3 +381,18 @@ def deliver_pr(requirement: str) -> dict:
 
 
 root_agent.tools.extend([deliver_pr])
+
+
+def arch_diagram() -> dict:
+    """
+    Generate a Mermaid diagram (graph TD) of the repo structure.
+    
+    Returns:
+        Dictionary with mermaid diagram code and status.
+    """
+    files = _orch.code_map.files if _orch.code_map else []
+    mermaid = mermaid_repo_tree(files)
+    return {"mermaid": mermaid, "status": [f"arch_diagram: {len(files)} files"]}
+
+
+root_agent.tools.extend([arch_diagram])
