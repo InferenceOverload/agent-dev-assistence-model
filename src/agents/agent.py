@@ -17,6 +17,8 @@ from ..analysis.kg_extract import analyze_repo_kg as _analyze_kg
 from ..tools.diagram_components import mermaid_from_kg
 from ..tools.diagram_sequence import sequence_from_kg
 from ..core.types import CodeMap
+from ..services.docsgen import generate_docs as _generate_docs
+from ..services.run_hints import how_to_run as _how_to_run
 import json
 
 
@@ -89,6 +91,43 @@ def sequence_diagram(root: str = ".", use_case: str = "User login flow") -> dict
     
     return {"mermaid": mermaid}
 
+
+def generate_repository_docs(root: str = ".", scope: str = "full") -> dict:
+    """Generate comprehensive documentation from repository.
+    
+    Args:
+        root: Repository root path
+        scope: Documentation scope (full, setup, api, or infra)
+    
+    Returns:
+        Dict with markdown documentation
+    """
+    from .repo_ingestor import ingest_repo
+    code_map, _ = ingest_repo(root)
+    kg = _analyze_kg(root, code_map)
+    
+    # Validate scope
+    if scope not in ["full", "setup", "api", "infra"]:
+        scope = "full"
+    
+    docs = _generate_docs(root, scope, kg, code_map)
+    
+    return {"markdown": docs, "scope": scope}
+
+
+def extract_run_instructions(root: str = ".") -> dict:
+    """Extract how to run instructions from repository.
+    
+    Args:
+        root: Repository root path
+    
+    Returns:
+        Dict with local, docker, tests, env, and gaps instructions
+    """
+    instructions = _how_to_run(root)
+    
+    return instructions
+
 # Create the root agent that ADK expects
 root_agent = Agent(
     name="orchestrator",
@@ -105,6 +144,7 @@ root_agent = Agent(
     - Repository ingestion: Clone and analyze codebases
     - Code search and Q&A: Search code and answer questions
     - Knowledge Graph: Extract entities, relations, and generate diagrams
+    - Documentation: Generate comprehensive docs and run instructions
     - Work planning: Create Rally stories and plan sprints
     - Development: Implement features and create pull requests
     - Deployment: Deploy preview environments
@@ -134,5 +174,8 @@ root_agent = Agent(
         analyze_repo_kg,
         arch_diagram_plus,
         sequence_diagram,
+        # Documentation tools
+        generate_repository_docs,
+        extract_run_instructions,
     ]
 )
