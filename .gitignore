@@ -11,6 +11,19 @@ env/
 dist/
 build/
 
+
+# Claude AI files
+.claude
+
+# GitHub workflow files (if you don't want them tracked)
+.githubfiles/
+
+# Other common files to ignore
+node_modules/
+.env
+*.log
+.DS_Store
+
 # Environment
 .env
 .env.local
