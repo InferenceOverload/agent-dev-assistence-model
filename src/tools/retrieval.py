@@ -241,6 +241,37 @@ class HybridRetriever:
                     # Merge using reciprocal rank fusion
                     if vector_results or bm25_results:
                         merged_results = self.reciprocal_rank_fusion(vector_results, bm25_results, k=60)
+                        
+                        # Apply LLM reranking if enabled (same logic as fallback path)
+                        if os.getenv("RERANK_ENABLED", "0") in ("1", "true", "TRUE"):
+                            from ..services.reranker import score_passages
+                            rerank_topk = int(os.getenv("RERANK_TOPK", "80"))
+                            candidates = merged_results[:rerank_topk]
+                            
+                            if candidates:
+                                passages = []
+                                for result in candidates:
+                                    chunk_idx = self._chunk_id_to_index.get(result.chunk_id)
+                                    if chunk_idx is not None:
+                                        chunk = self.chunks[chunk_idx]
+                                        passages.append({
+                                            "path": result.path,
+                                            "text": chunk.text[:1200],
+                                            "meta": {
+                                                "chunk_id": result.chunk_id,
+                                                "original_score": result.score,
+                                                "neighbors": result.neighbors
+                                            }
+                                        })
+                                
+                                scores = score_passages(query_text, passages)
+                                for i, score in enumerate(scores):
+                                    if i < len(candidates):
+                                        candidates[i].score = score * 0.7 + candidates[i].score * 0.3
+                                
+                                candidates.sort(key=lambda x: x.score, reverse=True)
+                                merged_results = candidates + merged_results[rerank_topk:]
+                        
                         if expand_neighbors:
                             merged_results = self._expand_with_neighbors(merged_results, k)
                         return merged_results[:k]
@@ -277,7 +308,7 @@ class HybridRetriever:
                         chunk = self.chunks[chunk_idx]
                         passages.append({
                             "path": result.path,
-                            "snippet": chunk.text[:1200],  # Cap at 1200 chars
+                            "text": chunk.text[:1200],  # Cap at 1200 chars
                             "meta": {
                                 "chunk_id": result.chunk_id,
                                 "original_score": result.score,

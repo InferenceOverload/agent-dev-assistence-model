@@ -1,8 +1,11 @@
-"""LLM-based passage reranking service for improved retrieval precision."""
+"""LLM-based passage reranking service."""
 
 import os
 from typing import List, Dict, Any
 import json
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 def score_passages(query: str, passages: List[Dict[str, Any]]) -> List[float]:
@@ -11,14 +14,14 @@ def score_passages(query: str, passages: List[Dict[str, Any]]) -> List[float]:
     
     Args:
         query: The search query
-        passages: List of passage dicts with 'path', 'snippet', and optional 'meta' fields
+        passages: List of passage dicts with 'path', 'text', and optional 'meta' fields
         
     Returns:
         List of relevance scores (0.0 to 1.0) for each passage
     """
     # Check if reranking is enabled
     if not os.getenv("RERANK_ENABLED", "0") in ("1", "true", "TRUE"):
-        # Return uniform scores if disabled (no-op)
+        # Return uniform scores if disabled
         return [0.5] * len(passages)
     
     if not passages:
@@ -41,9 +44,9 @@ def score_passages(query: str, passages: List[Dict[str, Any]]) -> List[float]:
         # Prepare passages for scoring (cap at 1200 chars each)
         passages_text = []
         for i, p in enumerate(passages):
-            snippet = (p.get("snippet", "") or "")[:1200]
+            text = (p.get("text", "") or "")[:1200]
             path = p.get("path", "unknown")
-            passages_text.append(f"[{i}] {path}\n{snippet}")
+            passages_text.append(f"[{i}] {path}\n{text}")
         
         # Build the scoring prompt
         prompt = f"""You are a code search relevance scorer. Given a query and code passages, score each passage's relevance from 0.0 to 1.0.
@@ -56,7 +59,7 @@ Passages:
 Return ONLY a JSON array of scores in order, one per passage. Example: [0.9, 0.3, 0.7, ...]
 Scores should reflect:
 - 0.9-1.0: Highly relevant, directly answers the query
-- 0.6-0.8: Relevant, contains useful related information
+- 0.6-0.8: Relevant, contains useful related information  
 - 0.3-0.5: Somewhat relevant, tangentially related
 - 0.0-0.2: Not relevant
 
@@ -99,6 +102,6 @@ JSON scores:"""
         return scores
         
     except Exception as e:
-        # On any error, return uniform scores (fallback to no reranking)
-        print(f"Reranking error: {e}")
+        # On any error, return uniform scores (fallback)
+        logger.warning(f"Reranking error: {e}")
         return [0.5] * len(passages)
