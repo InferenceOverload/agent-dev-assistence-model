@@ -30,6 +30,13 @@ session:
   ttl_minutes: 60  # Session timeout in minutes
   use_memory_bank: false  # Use persistent Memory Bank (default: in-memory)
 
+# Workspace storage settings
+workspace:
+  storage_type: "local"  # Storage backend: "local" or "gcs"
+  local_root: ".workspace"  # Local storage directory (default: .workspace, /tmp in cloud)
+  gcs_bucket: null  # GCS bucket name (required if storage_type=gcs)
+  gcs_prefix: "workspace"  # Prefix for GCS objects
+
 # Sandbox deployment settings
 sandbox:
   gcr_repo: "gcr.io/your-project/sandbox"  # Container registry

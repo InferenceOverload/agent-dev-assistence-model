@@ -210,10 +210,16 @@ def read_text_file(root: str, rel: str, max_bytes: int = 1_500_000) -> str:
 
 
 def safe_workspace_root() -> str:
-    """Ensure a local workspace folder exists for cloned repos."""
-    p = pathlib.Path(".workspace/repos").resolve()
-    p.mkdir(parents=True, exist_ok=True)
-    return str(p)
+    """Ensure a local workspace folder exists for cloned repos.
+    
+    This function is deprecated. Use WorkspaceStorage instead.
+    Kept for backward compatibility.
+    """
+    from src.services.workspace_storage import get_workspace_storage
+    
+    storage = get_workspace_storage()
+    storage.makedirs("repos")
+    return storage.get_local_path("repos")
 
 
 def slugify_url(url: str) -> str:
@@ -225,19 +231,37 @@ def slugify_url(url: str) -> str:
 
 def clone_repo(url: str, ref: str | None = None) -> str:
     """
-    Clone a git repo into .workspace/repos/<slug>, shallow by default.
+    Clone a git repo into workspace/repos/<slug>, shallow by default.
     Supports https and file:// URLs. Returns absolute path to clone.
     If the folder exists, keep it; if ref is provided, fetch/checkout that ref.
+    
+    Uses configurable storage backend (local or GCS).
     """
-    root = pathlib.Path(safe_workspace_root())
+    from src.services.workspace_storage import get_workspace_storage
+    
+    storage = get_workspace_storage()
     slug = slugify_url(url)
-    dest = root / slug
-    if not dest.exists():
-        cmd = ["git", "clone", "--depth", "1", url, str(dest)]
+    repo_path = f"repos/{slug}"
+    
+    # Get local path for git operations
+    local_dest = pathlib.Path(storage.get_local_path(repo_path))
+    
+    # Clone if doesn't exist locally
+    if not local_dest.exists():
+        cmd = ["git", "clone", "--depth", "1", url, str(local_dest)]
         subprocess.run(cmd, check=True, capture_output=True, text=True)
+        
+        # Sync to storage if using cloud storage
+        storage.sync_to_storage(str(local_dest), repo_path)
+    
+    # Handle ref if provided
     if ref:
-        subprocess.run(["git", "-C", str(dest), "fetch", "--depth", "1", "origin", ref], 
+        subprocess.run(["git", "-C", str(local_dest), "fetch", "--depth", "1", "origin", ref], 
                       check=True, capture_output=True, text=True)
-        subprocess.run(["git", "-C", str(dest), "checkout", ref], 
+        subprocess.run(["git", "-C", str(local_dest), "checkout", ref], 
                       check=True, capture_output=True, text=True)
-    return str(dest.resolve())
+        
+        # Sync updated repo to storage
+        storage.sync_to_storage(str(local_dest), repo_path)
+    
+    return str(local_dest.resolve())

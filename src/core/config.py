@@ -67,6 +67,14 @@ class SessionConfig(BaseModel):
     use_memory_bank: bool = Field(default=False)
     
 
+class WorkspaceConfig(BaseModel):
+    """Workspace storage configuration."""
+    storage_type: str = Field(default="local", description="Storage type: local or gcs")
+    local_root: Optional[str] = Field(default=".workspace", description="Local storage root")
+    gcs_bucket: Optional[str] = Field(default=None, description="GCS bucket name")
+    gcs_prefix: str = Field(default="workspace", description="GCS object prefix")
+    
+
 class AppConfig(BaseModel):
     """Application configuration."""
     gcp: GCPConfig
@@ -75,6 +83,7 @@ class AppConfig(BaseModel):
     rally: RallyConfig = Field(default_factory=RallyConfig)
     github: GitHubConfig = Field(default_factory=GitHubConfig)
     session: SessionConfig = Field(default_factory=SessionConfig)
+    workspace: WorkspaceConfig = Field(default_factory=WorkspaceConfig)
     
 
 def load_config(config_path: Optional[str] = None) -> AppConfig:
@@ -105,6 +114,16 @@ def load_config(config_path: Optional[str] = None) -> AppConfig:
         config_dict.setdefault("rally", {})["api_key"] = rally_key
     if github_token := os.getenv("GITHUB_TOKEN"):
         config_dict.setdefault("github", {})["token"] = github_token
+    
+    # Workspace storage overrides
+    if storage_type := os.getenv("ADAM_STORAGE_TYPE"):
+        config_dict.setdefault("workspace", {})["storage_type"] = storage_type
+    if workspace_root := os.getenv("ADAM_WORKSPACE_ROOT"):
+        config_dict.setdefault("workspace", {})["local_root"] = workspace_root
+    if gcs_bucket := os.getenv("ADAM_GCS_BUCKET"):
+        config_dict.setdefault("workspace", {})["gcs_bucket"] = gcs_bucket
+    if gcs_prefix := os.getenv("ADAM_GCS_PREFIX"):
+        config_dict.setdefault("workspace", {})["gcs_prefix"] = gcs_prefix
         
     return AppConfig(**config_dict)
 
