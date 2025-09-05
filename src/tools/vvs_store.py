@@ -40,13 +40,13 @@ class VertexVectorStore:
 
     def _to_datapoint(self, it: VVSItem):
         """Convert VVSItem to IndexDatapoint."""
-        from google.cloud.aiplatform_v1.types import IndexDatapoint, IndexDatapoint_Restriction
+        from google.cloud.aiplatform_v1.types import IndexDatapoint
         
         # Optional metadata as restrictions (filter fields)
         restricts = []
         for k in ("path", "start", "end"):
             if k in it.metadata and it.metadata[k] is not None:
-                restricts.append(IndexDatapoint_Restriction(
+                restricts.append(IndexDatapoint.Restriction(
                     namespace=k,
                     allow_list=[str(it.metadata[k])]
                 ))
