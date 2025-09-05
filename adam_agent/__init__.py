@@ -17,8 +17,8 @@ from src.tools.diagram import mermaid_repo_tree
 from src.analysis.scan import analyze_repo
 from src.analysis.models import RepoFacts
 from src.tools.diagram_components import mermaid_components
-from src.agents.rally_planner import RallyPlanner
-from src.core.types import KnowledgeGraph
+from src.agents.rally_planner import plan_from_requirement, preview_payload, apply_to_rally
+from src.services.session_context import get_context
 
 # Initialize a shared orchestrator instance
 _orch = OrchestratorAgent(
@@ -130,6 +130,11 @@ root_agent = Agent(
         "• For visual diagrams, use arch_diagram_plus() for component relationships or arch_diagram() for file structure.\n"
         "• For counting/listing code elements, you may use code_query(globs, regexes) as needed.\n"
         "• For requirements, prefer deliver_pr(requirement=...) to produce an end-to-end PR draft automatically.\n"
+        "• For Rally work items:\n"
+        "  1. ALWAYS call rally_plan(requirement) first to preview items\n"
+        "  2. If no repo context, suggest loading a repo for better planning\n"
+        "  3. Show the preview and ask for confirmation\n"
+        "  4. Only call rally_confirm(requirement, confirm=True) after user approves\n"
         "\n"
         "POLICY: Do NOT claim external side-effects (e.g., 'created PR', 'pushed code', 'merged branch'). "
         "You only return drafts and patches as tool outputs. Use phrases like 'drafted PR' or 'prepared patch', "
@@ -406,8 +411,8 @@ def arch_diagram() -> dict:
 # Cache for RepoFacts
 _cached_facts = None
 
-# Initialize Rally planner
-_rally_planner = RallyPlanner()
+# Cache for last Rally plan
+_last_rally_plan = None
 
 
 def analyze_repo_tool() -> dict:
@@ -477,83 +482,85 @@ def arch_diagram_plus() -> dict:
 root_agent.tools.extend([arch_diagram, analyze_repo_tool, arch_diagram_plus])
 
 
-def rally_plan(requirement_text: str) -> dict:
+def rally_plan(requirement: str) -> dict:
     """
-    Create a Rally work item plan from a requirement.
+    Create a context-aware Rally work item plan from a requirement.
     
     Parameters:
-        requirement_text: Plain text requirement description.
+        requirement: Plain text requirement description.
     
     Returns:
-        Dictionary with plan details including feature, stories, tasks, and preview.
+        Dictionary with preview of items to be created.
     """
-    status = ["rally_plan: analyzing requirement"]
+    global _last_rally_plan
+    status = ["rally_plan: gathering context"]
     
-    # Get knowledge graph if available
-    kg = None
-    try:
-        if _cached_facts and _cached_facts.components:
-            # Convert RepoFacts to a simple KG-like structure
-            kg = KnowledgeGraph(
-                nodes={},
-                components={name: comp for name, comp in _cached_facts.components.items()},
-                relations=_cached_facts.relations
-            )
-            status.append(f"using knowledge graph with {len(kg.components)} components")
-    except Exception as e:
-        status.append(f"proceeding without KG: {str(e)}")
+    # Gather all available context
+    context = get_context(_orch)
     
-    # Create plan
-    plan = _rally_planner.plan_to_rally(requirement_text, kg)
-    status.append(f"created plan {plan.plan_id} with {len(plan.stories)} stories and {len(plan.tasks)} tasks")
+    # Add cached facts if available
+    if _cached_facts:
+        context['repo_facts'] = _cached_facts
+        context['components'] = list(_cached_facts.components.keys()) if hasattr(_cached_facts, 'components') else []
+        context['frameworks'] = _cached_facts.frameworks if hasattr(_cached_facts, 'frameworks') else []
     
-    return {
-        "plan_id": plan.plan_id,
-        "preview": plan.preview(),
-        "feature": plan.feature.to_dict() if plan.feature else None,
-        "stories": [s.to_dict() for s in plan.stories],
-        "tasks": [t.to_dict() for t in plan.tasks],
-        "total_estimate": plan.total_estimate,
-        "impacted_components": plan.impacted_components,
-        "status": status
-    }
+    # Create plan using context
+    status.append(f"context available: repo={bool(context.get('files'))}, components={len(context.get('components', []))}")
+    plan = plan_from_requirement(requirement, context)
+    
+    # Cache the plan
+    _last_rally_plan = plan
+    
+    # Generate preview
+    preview = preview_payload(plan)
+    
+    status.append(f"created plan with {len(plan['stories'])} stories and {len(plan['tasks'])} tasks")
+    if plan['repo_agnostic']:
+        status.append("NOTE: No repository context - plan is generic")
+    
+    preview['status'] = status
+    return preview
 
 
-def rally_apply(plan_id: str) -> dict:
+def rally_confirm(requirement: str, confirm: bool = False) -> dict:
     """
-    Apply a Rally plan to create actual work items (dry run by default).
+    Confirm and apply a Rally plan to create work items.
     
     Parameters:
-        plan_id: The plan ID to apply (from rally_plan).
+        requirement: Plain text requirement (must match previous rally_plan call).
+        confirm: Set to True to actually create items in Rally.
     
     Returns:
-        Dictionary with created item IDs or dry run preview.
+        Dictionary with created items or preview requiring confirmation.
     """
-    status = ["rally_apply: applying plan"]
+    global _last_rally_plan
+    status = ["rally_confirm: processing"]
     
-    # Check if Rally is configured
-    import os
-    if not os.getenv("RALLY_API_KEY"):
-        status.append("WARNING: RALLY_API_KEY not configured - running in dry run mode")
-        dry_run = True
+    # Check if we have a cached plan for this requirement
+    if not _last_rally_plan or _last_rally_plan.get('requirement') != requirement:
+        # Regenerate the plan
+        status.append("regenerating plan")
+        context = get_context(_orch)
+        if _cached_facts:
+            context['repo_facts'] = _cached_facts
+            context['components'] = list(_cached_facts.components.keys()) if hasattr(_cached_facts, 'components') else []
+            context['frameworks'] = _cached_facts.frameworks if hasattr(_cached_facts, 'frameworks') else []
+        _last_rally_plan = plan_from_requirement(requirement, context)
+    
+    # Apply the plan
+    result = apply_to_rally(_last_rally_plan, confirm)
+    
+    if confirm:
+        status.append("applying to Rally")
+        if 'error' in result:
+            status.append(f"ERROR: {result['error']}")
+        elif 'summary' in result:
+            status.append(result['summary'])
     else:
-        dry_run = False
-        status.append("Rally configured - creating actual work items")
+        status.append("preview mode - set confirm=True to create items")
     
-    try:
-        result = _rally_planner.apply_plan(plan_id, dry_run=dry_run)
-        if dry_run:
-            status.append("DRY RUN complete - no items created")
-        else:
-            status.append(f"created {len(result.get('story_ids', []))} stories and {len(result.get('task_ids', []))} tasks")
-        
-        result["status"] = status
-        return result
-    except Exception as e:
-        return {
-            "error": str(e),
-            "status": status + [f"ERROR: {str(e)}"]
-        }
+    result['status'] = status
+    return result
 
 
-root_agent.tools.extend([rally_plan, rally_apply])
+root_agent.tools.extend([rally_plan, rally_confirm])

@@ -114,7 +114,7 @@ class RallyClient:
                 
         raise Exception(f"Failed after {retries} attempts")
         
-    def create_feature(self, title: str, description: str, tags: Optional[List[str]] = None) -> str:
+    def create_feature(self, title: str, description: str, tags: Optional[List[str]] = None) -> Dict[str, str]:
         """Create a Rally Feature (PortfolioItem).
         
         Args:
@@ -123,7 +123,7 @@ class RallyClient:
             tags: Optional tags
             
         Returns:
-            Feature ObjectID
+            Dict with "id" and "url" of created feature
         """
         data = {
             "PortfolioItem/Feature": {
@@ -161,14 +161,17 @@ class RallyClient:
         result = self._make_request("POST", "portfolioitem/feature/create", data)
         
         if result.get("Object"):
-            feature_id = result["Object"]["ObjectID"]
+            obj = result["Object"]
+            feature_id = str(obj["ObjectID"])
+            feature_url = f"{self.base_url}/#/detail/portfolioitem/feature/{feature_id}"
             logger.info(f"Created feature: {title} (ID: {feature_id})")
-            return str(feature_id)
+            return {"id": feature_id, "url": feature_url}
         else:
             raise Exception("Failed to create feature")
             
     def create_story(self, feature_id: Optional[str], title: str, description: str,
-                    acceptance_criteria: List[str], estimate: Optional[int] = None) -> str:
+                    acceptance_criteria: List[str], estimate: Optional[int] = None,
+                    tags: Optional[List[str]] = None) -> Dict[str, str]:
         """Create a Rally User Story (HierarchicalRequirement).
         
         Args:
@@ -177,9 +180,10 @@ class RallyClient:
             description: Story description
             acceptance_criteria: List of acceptance criteria
             estimate: Story points estimate (optional)
+            tags: Optional tags
             
         Returns:
-            Story ObjectID
+            Dict with "id" and "url" of created story
         """
         # Format acceptance criteria as HTML list
         ac_html = "<ul>" + "".join(f"<li>{ac}</li>" for ac in acceptance_criteria) + "</ul>"
@@ -205,14 +209,16 @@ class RallyClient:
         result = self._make_request("POST", "hierarchicalrequirement/create", data)
         
         if result.get("Object"):
-            story_id = result["Object"]["ObjectID"]
+            obj = result["Object"]
+            story_id = str(obj["ObjectID"])
+            story_url = f"{self.base_url}/#/detail/userstory/{story_id}"
             logger.info(f"Created story: {title} (ID: {story_id})")
-            return str(story_id)
+            return {"id": story_id, "url": story_url}
         else:
             raise Exception("Failed to create story")
             
     def create_task(self, story_id: str, title: str, description: str,
-                   estimate: Optional[float] = None) -> str:
+                   estimate: Optional[float] = None, tags: Optional[List[str]] = None) -> Dict[str, str]:
         """Create a Rally Task.
         
         Args:
@@ -220,9 +226,10 @@ class RallyClient:
             title: Task title
             description: Task description
             estimate: Task estimate in hours (optional)
+            tags: Optional tags
             
         Returns:
-            Task ObjectID
+            Dict with "id" and "url" of created task
         """
         data = {
             "Task": {
@@ -240,13 +247,15 @@ class RallyClient:
         result = self._make_request("POST", "task/create", data)
         
         if result.get("Object"):
-            task_id = result["Object"]["ObjectID"]
+            obj = result["Object"]
+            task_id = str(obj["ObjectID"])
+            task_url = f"{self.base_url}/#/detail/task/{task_id}"
             logger.info(f"Created task: {title} (ID: {task_id})")
-            return str(task_id)
+            return {"id": task_id, "url": task_url}
         else:
             raise Exception("Failed to create task")
             
-    def link_artifact(self, item_id: str, url: str, description: str = "Related artifact") -> bool:
+    def link_artifact(self, item_id: str, url: str, description: str = "Related artifact") -> Dict[str, bool]:
         """Link an external artifact to a Rally item.
         
         Args:
@@ -273,12 +282,12 @@ class RallyClient:
                     
                     self._make_request("POST", f"{item_type}/{item_id}", update_data)
                     logger.info(f"Linked artifact to {item_type} {item_id}: {url}")
-                    return True
+                    return {"ok": True}
             except:
                 continue
                 
         logger.warning(f"Could not find Rally item {item_id}")
-        return False
+        return {"ok": False}
         
     def __del__(self):
         """Cleanup client on deletion."""
@@ -296,20 +305,21 @@ def get_client() -> RallyClient:
         _client = RallyClient()
     return _client
 
-def create_feature(title: str, description: str, tags: Optional[List[str]] = None) -> str:
+def create_feature(title: str, description: str, tags: Optional[List[str]] = None) -> Dict[str, str]:
     """Create a Rally feature."""
     return get_client().create_feature(title, description, tags)
 
 def create_story(feature_id: Optional[str], title: str, description: str,
-                acceptance_criteria: List[str], estimate: Optional[int] = None) -> str:
+                acceptance_criteria: List[str], estimate: Optional[int] = None,
+                tags: Optional[List[str]] = None) -> Dict[str, str]:
     """Create a Rally story."""
-    return get_client().create_story(feature_id, title, description, acceptance_criteria, estimate)
+    return get_client().create_story(feature_id, title, description, acceptance_criteria, estimate, tags)
 
 def create_task(story_id: str, title: str, description: str,
-               estimate: Optional[float] = None) -> str:
+               estimate: Optional[float] = None, tags: Optional[List[str]] = None) -> Dict[str, str]:
     """Create a Rally task."""
-    return get_client().create_task(story_id, title, description, estimate)
+    return get_client().create_task(story_id, title, description, estimate, tags)
 
-def link_artifact(item_id: str, url: str, description: str = "Related artifact") -> bool:
+def link_artifact(item_id: str, url: str, description: str = "Related artifact") -> Dict[str, bool]:
     """Link an artifact to a Rally item."""
     return get_client().link_artifact(item_id, url, description)
