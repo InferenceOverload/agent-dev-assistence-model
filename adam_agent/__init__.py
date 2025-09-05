@@ -32,6 +32,9 @@ _last_stories = None
 _last_devplan = None
 
 
+from src.services.rally_reader import get_story, get_feature, get_story_context
+from src.agents.rally_extender import extend_story_with_context
+
 # ---- Tools exposed to ADK ----
 def load_repo(url: str, ref: str = "") -> dict:
     """
@@ -135,6 +138,11 @@ root_agent = Agent(
         "  2. If no repo context, suggest loading a repo for better planning\n"
         "  3. Show the preview and ask for confirmation\n"
         "  4. Only call rally_confirm(requirement, confirm=True) after user approves\n"
+        "• For existing Rally items:\n"
+        "  1. Use rally_get_story(id) or rally_get_feature(id) to fetch details\n"
+        "  2. Use rally_get_context(story_id) to get full story + feature context\n"
+        "  3. Use rally_extend_story(story_id, request) to create implementation tasks\n"
+        "  4. Use rally_apply_extension(story_id, request, confirm=True) to create tasks\n"
         "\n"
         "POLICY: Do NOT claim external side-effects (e.g., 'created PR', 'pushed code', 'merged branch'). "
         "You only return drafts and patches as tool outputs. Use phrases like 'drafted PR' or 'prepared patch', "
@@ -563,4 +571,175 @@ def rally_confirm(requirement: str, confirm: bool = False) -> dict:
     return result
 
 
-root_agent.tools.extend([rally_plan, rally_confirm])
+def rally_get_story(story_id: str) -> dict:
+    """
+    Fetch an existing Rally story by ID.
+    
+    Parameters:
+        story_id: Rally story ObjectID (e.g., '123456789').
+    
+    Returns:
+        Dictionary with story details including title, description, acceptance criteria.
+    """
+    status = [f"rally_get_story: fetching story {story_id}"]
+    
+    story = get_story(story_id)
+    
+    if 'error' in story:
+        status.append(f"ERROR: {story['error']}")
+        return {"error": story['error'], "status": status}
+    
+    status.append(f"fetched story: {story['title']}")
+    story['status'] = status
+    return story
+
+
+def rally_get_feature(feature_id: str) -> dict:
+    """
+    Fetch an existing Rally feature by ID.
+    
+    Parameters:
+        feature_id: Rally feature ObjectID (e.g., '987654321').
+    
+    Returns:
+        Dictionary with feature details including title, description.
+    """
+    status = [f"rally_get_feature: fetching feature {feature_id}"]
+    
+    feature = get_feature(feature_id)
+    
+    if 'error' in feature:
+        status.append(f"ERROR: {feature['error']}")
+        return {"error": feature['error'], "status": status}
+    
+    status.append(f"fetched feature: {feature['title']}")
+    feature['status'] = status
+    return feature
+
+
+def rally_get_context(story_id: str) -> dict:
+    """
+    Get full context for a Rally story including parent feature.
+    
+    Parameters:
+        story_id: Rally story ObjectID.
+    
+    Returns:
+        Dictionary with story and feature details.
+    """
+    status = [f"rally_get_context: fetching context for story {story_id}"]
+    
+    context = get_story_context(story_id)
+    
+    story = context.get('story', {})
+    feature = context.get('feature', {})
+    
+    if story.get('error'):
+        status.append(f"ERROR: {story['error']}")
+    else:
+        status.append(f"story: {story.get('title', 'Unknown')}")
+    
+    if feature and not feature.get('error'):
+        status.append(f"feature: {feature.get('title', 'Unknown')}")
+    
+    context['status'] = status
+    return context
+
+
+def rally_extend_story(story_id: str, extension_request: str) -> dict:
+    """
+    Extend an existing Rally story with implementation details based on current repo context.
+    
+    Parameters:
+        story_id: Rally story ObjectID to extend.
+        extension_request: Description of what to add (e.g., 'implementation tasks for authentication').
+    
+    Returns:
+        Dictionary with preview of tasks to be added or created tasks with confirmation.
+    """
+    global _cached_facts
+    status = [f"rally_extend_story: extending story {story_id}"]
+    
+    # Get the story context
+    rally_context = get_story_context(story_id)
+    
+    if rally_context.get('story', {}).get('error'):
+        return {"error": rally_context['story']['error'], "status": status}
+    
+    # Gather repo context
+    repo_context = get_context(_orch)
+    
+    # Add cached facts if available
+    if _cached_facts:
+        repo_context['repo_facts'] = _cached_facts
+        repo_context['components'] = list(_cached_facts.components.keys()) if hasattr(_cached_facts, 'components') else []
+        repo_context['frameworks'] = _cached_facts.frameworks if hasattr(_cached_facts, 'frameworks') else []
+    
+    status.append(f"repo context: files={len(repo_context.get('files', []))}, components={len(repo_context.get('components', []))}")
+    
+    # Create extension plan
+    extension = extend_story_with_context(rally_context, repo_context, extension_request)
+    
+    status.append(f"created {len(extension.get('tasks', []))} implementation tasks")
+    extension['status'] = status
+    return extension
+
+
+def rally_apply_extension(story_id: str, extension_request: str, confirm: bool = False) -> dict:
+    """
+    Apply story extension to Rally (create tasks under the story).
+    
+    Parameters:
+        story_id: Rally story ObjectID to extend.
+        extension_request: Description of what to add.
+        confirm: Set to True to actually create tasks in Rally.
+    
+    Returns:
+        Dictionary with created tasks or preview.
+    """
+    from src.services.rally import get_client
+    
+    status = [f"rally_apply_extension: story {story_id}"]
+    
+    # Get the extension plan
+    extension = rally_extend_story(story_id, extension_request)
+    
+    if 'error' in extension:
+        return extension
+    
+    if not confirm:
+        status.append("preview mode - set confirm=True to create tasks")
+        extension['requires_confirmation'] = True
+        extension['status'] = status
+        return extension
+    
+    # Apply to Rally
+    status.append("creating tasks in Rally")
+    
+    try:
+        client = get_client()
+        created_tasks = []
+        
+        for task in extension.get('tasks', []):
+            result = client.create_task(
+                story_id=story_id,
+                title=task['title'],
+                description=task['description'],
+                estimate=task.get('estimate'),
+                tags=task.get('tags', [])
+            )
+            created_tasks.append(result)
+            status.append(f"created task: {task['title']} (ID: {result['id']})")
+        
+        return {
+            "story_id": story_id,
+            "tasks": created_tasks,
+            "summary": f"Created {len(created_tasks)} tasks for story {story_id}",
+            "status": status
+        }
+    except Exception as e:
+        status.append(f"ERROR: {str(e)}")
+        return {"error": str(e), "status": status}
+
+
+root_agent.tools.extend([rally_plan, rally_confirm, rally_get_story, rally_get_feature, rally_get_context, rally_extend_story, rally_apply_extension])
