@@ -1,1 +1,0 @@
-Measure this repo and save the report to .claude/out/sizer.json using the repo-sizer subagent.

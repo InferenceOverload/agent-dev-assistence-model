@@ -1,1 +1,0 @@
-Use the sandbox-runner subagent to produce .claude/out/sandbox_plan.md and print its first 20 lines.

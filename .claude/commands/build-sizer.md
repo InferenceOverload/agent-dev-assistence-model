@@ -1,1 +1,0 @@
-Build the sizer module + tests using the repo-sizer subagent. After commit, print "Sizer build complete."

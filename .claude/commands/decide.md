@@ -1,1 +1,0 @@
-Run the policy-decider subagent to read .claude/out/sizer.json and produce .claude/out/policy.json. Then show the JSON.
