@@ -64,20 +64,25 @@ def index_repo(
             "status": ["index: no non-empty chunks; created empty retriever"],
         }
     
-    # Get embeddings
-    vectors = embed_texts(filtered_texts, dim=embed_dim)
-    
     # Build retriever
     retriever = HybridRetriever()
     
-    # Index chunks and vectors
-    retriever.index_chunks(filtered, vectors)
+    # Get embeddings only if policy says to use them
+    vectors = []
+    if decision.use_embeddings:
+        vectors = embed_texts(filtered_texts, dim=embed_dim)
+        # Index chunks with vectors
+        retriever.index_chunks(filtered, vectors)
+    else:
+        # Index chunks without vectors (BM25 only)
+        retriever.index_chunks(filtered, None)
     
-    # Build file-level summaries for hierarchical retrieval
-    try:
-        retriever.build_file_summaries(lambda xs: embed_texts(xs, dim=embed_dim))
-    except Exception:
-        pass
+    # Build file-level summaries for hierarchical retrieval (only if using embeddings)
+    if decision.use_embeddings:
+        try:
+            retriever.build_file_summaries(lambda xs: embed_texts(xs, dim=embed_dim))
+        except Exception:
+            pass
     
     # --- Vertex Vector Search path ---
     used_vvs = False
@@ -115,8 +120,8 @@ def index_repo(
     # Store retriever in session store
     storage_factory.session_store().put_retriever(session_id, retriever)
     
-    # Store vectors in vector store (skip if using VVS)
-    if not used_vvs:
+    # Store vectors in vector store (skip if using VVS or not using embeddings)
+    if not used_vvs and decision.use_embeddings and vectors:
         storage_factory.vector_store().upsert(vectors, filtered, code_map)
     
     return {
