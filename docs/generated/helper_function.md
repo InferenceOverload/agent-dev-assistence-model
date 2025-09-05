@@ -3,7 +3,6 @@
 Found 3 relevant code sections. Top match: src/app.js
 
 Relevant code:
-
 function helperFunction() {
     // A helper function in JavaScript
     return "hello world";
