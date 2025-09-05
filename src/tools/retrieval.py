@@ -3,11 +3,13 @@
 from typing import List, Dict, Optional, Any, Tuple, Iterable
 import logging
 import re
+import os
 from collections import defaultdict
 from rank_bm25 import BM25Okapi
 import numpy as np
 
 from ..core.types import Chunk, RetrievalResult
+from ..core.config import get_config
 
 logger = logging.getLogger(__name__)
 
@@ -255,6 +257,49 @@ class HybridRetriever:
             
         # Merge using reciprocal rank fusion
         merged_results = self.reciprocal_rank_fusion(vector_results, bm25_results, k=60)
+        
+        # Apply LLM reranking if enabled
+        if os.getenv("RERANK_ENABLED", "0") in ("1", "true", "TRUE"):
+            # Import reranker lazily to avoid circular deps
+            from ..services.reranker import score_passages
+            
+            # Get top-K candidates for reranking (configurable, default 80)
+            rerank_topk = int(os.getenv("RERANK_TOPK", "80"))
+            candidates = merged_results[:rerank_topk]
+            
+            if candidates:
+                # Build passage objects for scoring
+                passages = []
+                for result in candidates:
+                    # Find the chunk to get full text
+                    chunk_idx = self._chunk_id_to_index.get(result.chunk_id)
+                    if chunk_idx is not None:
+                        chunk = self.chunks[chunk_idx]
+                        passages.append({
+                            "path": result.path,
+                            "snippet": chunk.text[:1200],  # Cap at 1200 chars
+                            "meta": {
+                                "chunk_id": result.chunk_id,
+                                "original_score": result.score,
+                                "neighbors": result.neighbors
+                            }
+                        })
+                
+                # Get LLM scores
+                scores = score_passages(query_text, passages)
+                
+                # Update result scores with LLM scores
+                for i, score in enumerate(scores):
+                    if i < len(candidates):
+                        # Combine LLM score with original score (weighted avg)
+                        # LLM gets 70% weight, original gets 30%
+                        candidates[i].score = score * 0.7 + candidates[i].score * 0.3
+                
+                # Re-sort by new scores
+                candidates.sort(key=lambda x: x.score, reverse=True)
+                
+                # Replace the top-K with reranked results, keep the rest unchanged
+                merged_results = candidates + merged_results[rerank_topk:]
         
         if expand_neighbors:
             merged_results = self._expand_with_neighbors(merged_results, k)

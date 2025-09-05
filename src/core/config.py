@@ -42,6 +42,9 @@ class VectorSearchConfig(BaseModel):
     vvs_force: bool = Field(default_factory=lambda: os.getenv("VVS_FORCE", "0") in ("1", "true", "TRUE", "yes", "YES"))
     vvs_min_files: int = Field(default_factory=lambda: int(os.getenv("VVS_MIN_FILES", "1200")))
     vvs_min_chunks: int = Field(default_factory=lambda: int(os.getenv("VVS_MIN_CHUNKS", "10000")))
+    # Reranking configuration
+    rerank_enabled: bool = Field(default_factory=lambda: os.getenv("RERANK_ENABLED", "0") in ("1", "true", "TRUE"))
+    rerank_topk: int = Field(default_factory=lambda: int(os.getenv("RERANK_TOPK", "80")))
     
 
 class RallyConfig(BaseModel):

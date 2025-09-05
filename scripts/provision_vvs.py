@@ -23,9 +23,11 @@ endpoint = aiplatform.MatchingEngineIndexEndpoint.create(
 )
 
 # Deploy (may take ~20–30 minutes on first deploy)
+# Deployed index ID must start with letter and contain only letters, numbers, underscores
+deployed_id = f"vs_deployed_{PROJECT_ID.replace('-', '_')}"
 endpoint.deploy_index(
     index=index,
-    deployed_index_id=f"vs-deployed-{PROJECT_ID}",
+    deployed_index_id=deployed_id,
 )
 
 # Also print to stdout and append to a log file for the setup script
