@@ -8,7 +8,8 @@ from typing import Tuple, List
 
 from ..core.types import Chunk, CodeMap
 from ..tools.repo_io import list_source_files, read_text_file
-from ..tools.parsing import detect_language, extract_imports, find_symbols, split_code_windows
+from ..tools.parsing import detect_language, extract_imports
+from ..tools.chunker import chunk_code
 
 
 def get_git_commit(root: str) -> str:
@@ -78,48 +79,32 @@ def ingest_repo(root: str = ".") -> Tuple[CodeMap, List[Chunk]]:
             # Read file content
             text = read_text_file(root, file_path)
             
+            # Guard against empty/whitespace text
+            if not text or not text.strip():
+                continue
+                
             # Get language and metadata
             lang = detect_language(file_path)
-            symbols = find_symbols(text, lang)
             imports = extract_imports(text, lang)
             
-            # Split into windows/chunks
-            windows = split_code_windows(text, lang)
+            # Use structure-aware chunking
+            file_chunks = chunk_code(file_path, text, lang, repo, commit)
             
-            # Create chunks for each window
-            for start_line, end_line, chunk_text in windows:
-                # Guard against empty/whitespace-only chunk text
-                if not (chunk_text or "").strip():
-                    continue
-                    
-                chunk_id = f"{repo}:{commit}:{file_path}#{start_line}-{end_line}"
-                
-                chunk = Chunk(
-                    id=chunk_id,
-                    repo=repo,
-                    commit=commit,
-                    path=file_path,
-                    lang=lang,
-                    start_line=start_line,
-                    end_line=end_line,
-                    text=chunk_text,
-                    symbols=symbols[:50],  # Limit to 50 symbols
-                    imports=imports[:50],  # Limit to 50 imports
-                    neighbors=[],  # Will be populated later if needed
-                    hash=compute_hash(chunk_text)
-                )
-                
-                all_chunks.append(chunk)
+            # Add chunks, ensuring no empty ones
+            for chunk in file_chunks:
+                if chunk.text and chunk.text.strip():
+                    all_chunks.append(chunk)
             
             # Build dependencies map
             deps[file_path] = imports
             
-            # Build symbol index: symbol -> [files that define it]
-            for symbol in symbols:
-                if symbol not in symbol_index:
-                    symbol_index[symbol] = []
-                if file_path not in symbol_index[symbol]:
-                    symbol_index[symbol].append(file_path)
+            # Build symbol index from chunks: symbol -> [files that define it]
+            for chunk in file_chunks:
+                for symbol in chunk.symbols:
+                    if symbol not in symbol_index:
+                        symbol_index[symbol] = []
+                    if file_path not in symbol_index[symbol]:
+                        symbol_index[symbol].append(file_path)
             
             processed_files.append(file_path)
             
