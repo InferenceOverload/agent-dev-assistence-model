@@ -8,7 +8,7 @@ from typing import Tuple, List
 
 from ..core.types import Chunk, CodeMap
 from ..tools.repo_io import list_source_files, read_text_file
-from ..tools.parsing import detect_language, extract_imports
+from ..tools.parsing import detect_language, extract_imports, find_symbols
 from ..tools.chunker import chunk_code
 
 
@@ -87,19 +87,36 @@ def ingest_repo(root: str = ".") -> Tuple[CodeMap, List[Chunk]]:
             lang = detect_language(file_path)
             imports = extract_imports(text, lang)
             
-            # Use structure-aware chunking
-            file_chunks = chunk_code(file_path, text, lang, repo, commit)
+            # Use structure-aware chunking (simplified API)
+            chunk_likes = chunk_code(file_path, text)
             
-            # Add chunks, ensuring no empty ones
-            for chunk in file_chunks:
-                if chunk.text and chunk.text.strip():
+            # Convert ChunkLike objects to Chunk objects
+            for cl in chunk_likes:
+                if cl.text and cl.text.strip():
+                    # Extract symbols from the chunk text
+                    symbols = find_symbols(cl.text, lang)
+                    
+                    chunk = Chunk(
+                        id=f"{repo}:{commit}:{file_path}#{cl.start_line}-{cl.end_line}",
+                        repo=repo,
+                        commit=commit,
+                        path=file_path,
+                        lang=lang,
+                        start_line=cl.start_line,
+                        end_line=cl.end_line,
+                        text=cl.text,
+                        symbols=symbols[:50],  # Limit to 50 symbols
+                        imports=imports[:50],  # Limit to 50 imports
+                        neighbors=[],  # Will be populated later if needed
+                        hash=cl.hash
+                    )
                     all_chunks.append(chunk)
             
             # Build dependencies map
             deps[file_path] = imports
             
             # Build symbol index from chunks: symbol -> [files that define it]
-            for chunk in file_chunks:
+            for chunk in [c for c in all_chunks if c.path == file_path]:
                 for symbol in chunk.symbols:
                     if symbol not in symbol_index:
                         symbol_index[symbol] = []

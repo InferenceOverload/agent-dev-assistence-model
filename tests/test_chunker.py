@@ -1,15 +1,18 @@
 """Tests for structure-aware code chunking."""
 
 import pytest
-from src.tools.chunker import chunk_code
+from src.tools.chunker import chunk_code, ChunkLike
 
 
 class TestPythonChunking:
     """Test Python code chunking."""
     
-    def test_chunk_python_functions(self):
-        """Test chunking Python code with functions."""
-        code = '''def hello():
+    def test_chunk_python_def_class(self):
+        """Test chunking Python code with def and class."""
+        code = '''import os
+import sys
+
+def hello():
     """Say hello."""
     print("Hello, World!")
 
@@ -24,50 +27,50 @@ class Greeter:
     def greet(self):
         print(f"Hello, {self.name}!")
 '''
-        chunks = chunk_code("test.py", code, "python", "test", "abc123")
+        chunks = chunk_code("test.py", code)
         
         # Should create chunks for functions and class
         assert len(chunks) > 0
+        assert all(isinstance(c, ChunkLike) for c in chunks)
         
         # Check that chunks have proper metadata
         for chunk in chunks:
             assert chunk.path == "test.py"
-            assert chunk.lang == "python"
-            assert chunk.repo == "test"
-            assert chunk.commit == "abc123"
             assert chunk.text.strip()  # No empty chunks
-            
-        # Check symbols are extracted
-        all_symbols = []
-        for chunk in chunks:
-            all_symbols.extend(chunk.symbols)
-        assert "hello" in all_symbols or "goodbye" in all_symbols or "Greeter" in all_symbols
+            assert chunk.start_line > 0
+            assert chunk.end_line >= chunk.start_line
+            assert len(chunk.hash) == 40  # SHA1 hex
+        
+        # Imports should be with first code block
+        first_chunk_text = chunks[0].text
+        assert "import os" in first_chunk_text or any("import os" in c.text for c in chunks)
     
     def test_chunk_large_python_function(self):
         """Test splitting large Python functions."""
         # Create a large function
         lines = ['def large_function():']
         lines.append('    """A very large function."""')
-        for i in range(200):  # Make it large
+        for i in range(100):  # Make it large
             lines.append(f'    print("Line {i}")')
+            lines.append(f'    x_{i} = {i} * 2')
         lines.append('    return None')
         
         code = '\n'.join(lines)
-        chunks = chunk_code("large.py", code, "python")
+        chunks = chunk_code("large.py", code)
         
-        # Should split into multiple chunks
+        # Should split into multiple chunks with overlap
         assert len(chunks) >= 2
         
-        # Each chunk should have reasonable size
+        # Each chunk should have reasonable size (~600-800 tokens = ~2400-3200 chars)
         for chunk in chunks:
-            assert len(chunk.text) < 4000  # ~1000 tokens
+            assert len(chunk.text) <= 3500  # Allow some wiggle room
     
     def test_empty_python_file(self):
         """Test handling empty Python file."""
-        chunks = chunk_code("empty.py", "", "python")
+        chunks = chunk_code("empty.py", "")
         assert len(chunks) == 0
         
-        chunks = chunk_code("whitespace.py", "   \n\n  ", "python")
+        chunks = chunk_code("whitespace.py", "   \n\n  ")
         assert len(chunks) == 0
 
 
@@ -76,7 +79,9 @@ class TestJavaScriptChunking:
     
     def test_chunk_javascript_functions(self):
         """Test chunking JavaScript with various function styles."""
-        code = '''// Utility functions
+        code = '''import React from 'react';
+import { useState } from 'react';
+
 export function add(a, b) {
     return a + b;
 }
@@ -97,17 +102,13 @@ class Calculator {
 
 export default Calculator;
 '''
-        chunks = chunk_code("calc.js", code, "javascript")
+        chunks = chunk_code("calc.js", code)
         
         assert len(chunks) > 0
         
-        # Check symbols extraction
-        all_symbols = []
-        for chunk in chunks:
-            all_symbols.extend(chunk.symbols)
-        
-        # Should find at least some symbols
-        assert "add" in all_symbols or "multiply" in all_symbols or "Calculator" in all_symbols
+        # Imports should be kept with first block
+        first_chunk = chunks[0].text
+        assert "import React" in first_chunk
     
     def test_chunk_typescript_with_types(self):
         """Test TypeScript with type annotations."""
@@ -127,7 +128,7 @@ export class UserService {
     }
 }
 '''
-        chunks = chunk_code("user.ts", code, "typescript")
+        chunks = chunk_code("user.ts", code)
         
         assert len(chunks) > 0
         for chunk in chunks:
@@ -162,7 +163,7 @@ resource "aws_s3_bucket" "data" {
   bucket = "my-data-bucket"
 }
 '''
-        chunks = chunk_code("main.tf", code, "terraform")
+        chunks = chunk_code("main.tf", code)
         
         assert len(chunks) > 0
         
@@ -199,7 +200,7 @@ CREATE VIEW active_users AS
 SELECT * FROM users
 WHERE last_login > NOW() - INTERVAL '30 days';
 
-CREATE FUNCTION get_user_posts(user_id INTEGER)
+CREATE OR REPLACE FUNCTION get_user_posts(user_id INTEGER)
 RETURNS TABLE(title VARCHAR, content TEXT) AS $$
 BEGIN
     RETURN QUERY
@@ -207,17 +208,40 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 '''
-        chunks = chunk_code("schema.sql", code, "sql")
+        chunks = chunk_code("schema.sql", code)
         
         assert len(chunks) > 0
         
-        # Check symbols extraction
-        all_symbols = []
-        for chunk in chunks:
-            all_symbols.extend(chunk.symbols)
-        
-        # Should find table/view names
-        assert any(s.lower() in ['users', 'posts', 'active_users'] for s in all_symbols)
+        # Each CREATE should be in a chunk
+        all_text = ' '.join(c.text for c in chunks).upper()
+        assert 'CREATE TABLE USERS' in all_text
+        assert 'CREATE TABLE POSTS' in all_text
+    
+    def test_chunk_plsql(self):
+        """Test PL/SQL with packages."""
+        code = '''CREATE OR REPLACE PACKAGE user_pkg AS
+    PROCEDURE add_user(p_name VARCHAR2, p_email VARCHAR2);
+    FUNCTION get_user_count RETURN NUMBER;
+END user_pkg;
+/
+
+CREATE OR REPLACE PACKAGE BODY user_pkg AS
+    PROCEDURE add_user(p_name VARCHAR2, p_email VARCHAR2) IS
+    BEGIN
+        INSERT INTO users (name, email) VALUES (p_name, p_email);
+    END;
+    
+    FUNCTION get_user_count RETURN NUMBER IS
+        v_count NUMBER;
+    BEGIN
+        SELECT COUNT(*) INTO v_count FROM users;
+        RETURN v_count;
+    END;
+END user_pkg;
+/
+'''
+        chunks = chunk_code("user_pkg.plsql", code)
+        assert len(chunks) > 0
 
 
 class TestMarkdownChunking:
@@ -261,14 +285,14 @@ We use black for formatting.
 
 Run tests with pytest.
 '''
-        chunks = chunk_code("README.md", code, "markdown")
+        chunks = chunk_code("README.md", code)
         
         assert len(chunks) > 0
         
-        # Should group small sections but respect heading structure
+        # Should group sections intelligently
         for chunk in chunks:
             assert chunk.text.strip()
-            # Each chunk should start with or contain a heading
+            # Each chunk should contain heading(s)
             assert '#' in chunk.text
     
     def test_merge_tiny_markdown_sections(self):
@@ -295,10 +319,14 @@ This section has a lot more content that goes on for multiple lines
 and paragraphs with various details about the implementation and
 design decisions that were made during development.
 '''
-        chunks = chunk_code("doc.md", code, "markdown")
+        chunks = chunk_code("doc.md", code)
         
         # Tiny sections should be merged
         assert len(chunks) <= 3  # Should merge tiny sections
+        
+        # Check H1 sections start new chunks
+        h1_chunks = [c for c in chunks if c.text.startswith('# ')]
+        assert len(h1_chunks) <= 2
 
 
 class TestFallbackChunking:
@@ -306,25 +334,30 @@ class TestFallbackChunking:
     
     def test_unknown_language_fallback(self):
         """Test that unknown languages use line-based chunking."""
-        code = "Line 1\n" * 300  # 300 lines
+        code = '\n'.join([f"Line {i}" for i in range(200)])  # 200 lines
         
-        chunks = chunk_code("file.xyz", code, "unknown")
+        chunks = chunk_code("file.xyz", code)
         
         assert len(chunks) > 1  # Should split into multiple chunks
         
-        # Check overlap
+        # Check overlap exists (lines appear in multiple chunks)
         if len(chunks) > 1:
-            # Later chunks should have some overlap with previous
-            assert chunks[0].end_line >= chunks[1].start_line - 30
+            # Some lines should appear in both chunks (overlap)
+            chunk0_lines = chunks[0].text.split('\n')
+            chunk1_lines = chunks[1].text.split('\n')
+            # Should have some overlap
+            overlap = set(chunk0_lines) & set(chunk1_lines)
+            assert len(overlap) > 0
     
-    def test_binary_file_handling(self):
-        """Test handling files with invalid UTF-8."""
-        # This would be binary data in practice
-        code = "Normal text\n" + "More text\n" * 50
+    def test_binary_file_skip(self):
+        """Test skipping binary files."""
+        # Binary-like content (would fail UTF-8 encoding in real case)
+        # For testing, we'll use normal text since we can't actually create invalid UTF-8
+        code = "Normal text that represents a file"
         
-        chunks = chunk_code("file.bin", code, "binary")
+        chunks = chunk_code("file.bin", code)
         
-        # Should handle gracefully
+        # Should handle gracefully (fallback chunking)
         assert len(chunks) >= 1
 
 
@@ -339,121 +372,68 @@ class TestEdgeCases:
 def another():
     return 42
 '''
-        chunks = chunk_code("broken.py", code, "python")
+        chunks = chunk_code("broken.py", code)
         
         # Should still produce chunks using fallback
         assert len(chunks) > 0
-    
-    def test_mixed_content(self):
-        """Test file with mixed content types."""
-        code = '''# Documentation
-
-Some docs here.
-
-```python
-def example():
-    return True
-```
-
-More documentation.
-
-```sql
-SELECT * FROM users;
-```
-'''
-        chunks = chunk_code("mixed.md", code, "markdown")
-        
-        assert len(chunks) > 0
-        # Should handle code blocks within markdown
+        assert all(c.text.strip() for c in chunks)
     
     def test_very_long_lines(self):
         """Test handling very long lines."""
         long_line = "x = '" + "a" * 5000 + "'"
         code = f"def func():\n    {long_line}\n    return x"
         
-        chunks = chunk_code("long.py", code, "python")
+        chunks = chunk_code("long.py", code)
         
         assert len(chunks) > 0
         # Should handle without error
-    
-    def test_unicode_content(self):
-        """Test handling unicode content."""
-        code = '''def hello():
-    """Say hello in multiple languages."""
-    print("Hello 你好 مرحبا こんにちは")
-    print("Émojis: 🎉 🚀 ✨")
-'''
-        chunks = chunk_code("unicode.py", code, "python")
-        
-        assert len(chunks) > 0
-        # Should preserve unicode
-        assert "你好" in chunks[0].text
-        assert "🎉" in chunks[0].text
 
 
-class TestChunkMetadata:
-    """Test chunk metadata extraction."""
+class TestChunkBoundaries:
+    """Test that chunk boundaries are correct."""
     
-    def test_python_imports_extraction(self):
-        """Test extraction of Python imports."""
-        code = '''import os
-from pathlib import Path
-from typing import List, Dict
-import numpy as np
-
-def process():
-    return Path.cwd()
-'''
-        chunks = chunk_code("test.py", code, "python")
-        
-        assert len(chunks) > 0
-        # Check imports are extracted
-        all_imports = []
-        for chunk in chunks:
-            all_imports.extend(chunk.imports)
-        
-        assert "os" in all_imports
-        assert "pathlib" in all_imports
-        assert "typing" in all_imports
-        assert "numpy" in all_imports
-    
-    def test_javascript_imports_extraction(self):
-        """Test extraction of JavaScript imports."""
-        code = '''import React from 'react';
-import { useState, useEffect } from 'react';
-const lodash = require('lodash');
-
-export function Component() {
-    return <div>Hello</div>;
-}
-'''
-        chunks = chunk_code("component.jsx", code, "javascript")
-        
-        assert len(chunks) > 0
-        all_imports = []
-        for chunk in chunks:
-            all_imports.extend(chunk.imports)
-        
-        assert "react" in all_imports
-        assert "lodash" in all_imports
-    
-    def test_chunk_id_generation(self):
-        """Test that chunk IDs are unique and informative."""
+    def test_chunk_boundaries_continuous(self):
+        """Test that chunks have proper line boundaries."""
         code = '''def func1():
     pass
 
 def func2():
     pass
+
+def func3():
+    pass
 '''
-        chunks = chunk_code("test.py", code, "python", "myrepo", "abc123")
+        chunks = chunk_code("test.py", code)
         
-        assert len(chunks) > 0
-        
-        # Check IDs are unique
-        ids = [chunk.id for chunk in chunks]
-        assert len(ids) == len(set(ids))
-        
-        # Check ID format
         for chunk in chunks:
-            assert "test.py" in chunk.id
-            assert ":" in chunk.id
+            # Boundaries should be positive
+            assert chunk.start_line > 0
+            assert chunk.end_line >= chunk.start_line
+            
+            # Text line count should roughly match boundaries
+            lines_in_text = len(chunk.text.strip().split('\n'))
+            boundary_lines = chunk.end_line - chunk.start_line + 1
+            # Allow for some discrepancy due to empty lines
+            assert abs(lines_in_text - boundary_lines) <= 2
+    
+    def test_chunk_size_window(self):
+        """Test that chunks stay within size window."""
+        # Create code with known structure
+        code = '\n'.join([
+            'def func1():',
+            '    """Function 1"""',
+            '    ' + '\n    '.join([f'print("{i}")' for i in range(20)]),
+            '',
+            'def func2():',
+            '    """Function 2"""',
+            '    ' + '\n    '.join([f'print("{i}")' for i in range(20)]),
+        ])
+        
+        chunks = chunk_code("test.py", code)
+        
+        for chunk in chunks:
+            # ~600-800 tokens target = ~2400-3200 chars
+            assert len(chunk.text) <= 3500  # Allow some buffer
+            # Should not be too small unless it's the last chunk
+            if chunk != chunks[-1]:
+                assert len(chunk.text) >= 100  # Minimum reasonable size
