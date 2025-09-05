@@ -12,6 +12,83 @@ from .dev_pr import implement_feature, create_pull_request
 from .sandbox_runner import deploy_preview, teardown_preview
 from .code_exec_agent import run_python_tests, execute_code_snippet
 
+# Knowledge Graph tools
+from ..analysis.kg_extract import analyze_repo_kg as _analyze_kg
+from ..tools.diagram_components import mermaid_from_kg
+from ..tools.diagram_sequence import sequence_from_kg
+from ..core.types import CodeMap
+import json
+
+
+def analyze_repo_kg(root: str = ".") -> dict:
+    """Extract knowledge graph from repository.
+    
+    Args:
+        root: Repository root path
+    
+    Returns:
+        Dict with KG entities and relations
+    """
+    # Get code map first
+    from .repo_ingestor import ingest_repo
+    code_map, _ = ingest_repo(root)
+    
+    # Build KG
+    kg = _analyze_kg(root, code_map)
+    
+    return {
+        "entities": [{
+            "type": e.type,
+            "name": e.name,
+            "path": e.path,
+            "attrs": e.attrs
+        } for e in kg.entities],
+        "relations": [{
+            "src": r.src,
+            "dst": r.dst,
+            "kind": r.kind,
+            "attrs": r.attrs
+        } for r in kg.relations],
+        "warnings": kg.warnings
+    }
+
+
+def arch_diagram_plus(root: str = ".") -> dict:
+    """Generate architecture diagram using KG.
+    
+    Args:
+        root: Repository root path
+    
+    Returns:
+        Dict with Mermaid diagram
+    """
+    from .repo_ingestor import ingest_repo
+    code_map, _ = ingest_repo(root)
+    kg = _analyze_kg(root, code_map)
+    
+    mermaid = mermaid_from_kg(kg)
+    
+    return {"mermaid": mermaid}
+
+
+def sequence_diagram(root: str = ".", use_case: str = "User login flow") -> dict:
+    """Generate sequence diagram for a use case.
+    
+    Args:
+        root: Repository root path
+        use_case: Description of the use case
+    
+    Returns:
+        Dict with Mermaid sequence diagram
+    """
+    from .repo_ingestor import ingest_repo
+    code_map, _ = ingest_repo(root)
+    kg = _analyze_kg(root, code_map)
+    
+    mermaid = sequence_from_kg(kg, use_case)
+    
+    return {"mermaid": mermaid}
+
 # Create the root agent that ADK expects
 root_agent = Agent(
     name="orchestrator",
@@ -27,6 +104,7 @@ root_agent = Agent(
     Available capabilities through your tools:
     - Repository ingestion: Clone and analyze codebases
     - Code search and Q&A: Search code and answer questions
+    - Knowledge Graph: Extract entities, relations, and generate diagrams
     - Work planning: Create Rally stories and plan sprints
     - Development: Implement features and create pull requests
     - Deployment: Deploy preview environments
@@ -52,5 +130,9 @@ root_agent = Agent(
         # Testing tools
         run_python_tests,
         execute_code_snippet,
+        # Knowledge Graph tools
+        analyze_repo_kg,
+        arch_diagram_plus,
+        sequence_diagram,
     ]
 )
