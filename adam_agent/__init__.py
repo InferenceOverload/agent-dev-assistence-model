@@ -17,6 +17,8 @@ from src.tools.diagram import mermaid_repo_tree
 from src.analysis.scan import analyze_repo
 from src.analysis.models import RepoFacts
 from src.tools.diagram_components import mermaid_components
+from src.agents.rally_planner import RallyPlanner
+from src.core.types import KnowledgeGraph
 
 # Initialize a shared orchestrator instance
 _orch = OrchestratorAgent(
@@ -404,6 +406,9 @@ def arch_diagram() -> dict:
 # Cache for RepoFacts
 _cached_facts = None
 
+# Initialize Rally planner
+_rally_planner = RallyPlanner()
+
 
 def analyze_repo_tool() -> dict:
     """
@@ -470,3 +475,85 @@ def arch_diagram_plus() -> dict:
 
 
 root_agent.tools.extend([arch_diagram, analyze_repo_tool, arch_diagram_plus])
+
+
+def rally_plan(requirement_text: str) -> dict:
+    """
+    Create a Rally work item plan from a requirement.
+    
+    Parameters:
+        requirement_text: Plain text requirement description.
+    
+    Returns:
+        Dictionary with plan details including feature, stories, tasks, and preview.
+    """
+    status = ["rally_plan: analyzing requirement"]
+    
+    # Get knowledge graph if available
+    kg = None
+    try:
+        if _cached_facts and _cached_facts.components:
+            # Convert RepoFacts to a simple KG-like structure
+            kg = KnowledgeGraph(
+                nodes={},
+                components={name: comp for name, comp in _cached_facts.components.items()},
+                relations=_cached_facts.relations
+            )
+            status.append(f"using knowledge graph with {len(kg.components)} components")
+    except Exception as e:
+        status.append(f"proceeding without KG: {str(e)}")
+    
+    # Create plan
+    plan = _rally_planner.plan_to_rally(requirement_text, kg)
+    status.append(f"created plan {plan.plan_id} with {len(plan.stories)} stories and {len(plan.tasks)} tasks")
+    
+    return {
+        "plan_id": plan.plan_id,
+        "preview": plan.preview(),
+        "feature": plan.feature.to_dict() if plan.feature else None,
+        "stories": [s.to_dict() for s in plan.stories],
+        "tasks": [t.to_dict() for t in plan.tasks],
+        "total_estimate": plan.total_estimate,
+        "impacted_components": plan.impacted_components,
+        "status": status
+    }
+
+
+def rally_apply(plan_id: str) -> dict:
+    """
+    Apply a Rally plan to create actual work items (dry run by default).
+    
+    Parameters:
+        plan_id: The plan ID to apply (from rally_plan).
+    
+    Returns:
+        Dictionary with created item IDs or dry run preview.
+    """
+    status = ["rally_apply: applying plan"]
+    
+    # Check if Rally is configured
+    import os
+    if not os.getenv("RALLY_API_KEY"):
+        status.append("WARNING: RALLY_API_KEY not configured - running in dry run mode")
+        dry_run = True
+    else:
+        dry_run = False
+        status.append("Rally configured - creating actual work items")
+    
+    try:
+        result = _rally_planner.apply_plan(plan_id, dry_run=dry_run)
+        if dry_run:
+            status.append("DRY RUN complete - no items created")
+        else:
+            status.append(f"created {len(result.get('story_ids', []))} stories and {len(result.get('task_ids', []))} tasks")
+        
+        result["status"] = status
+        return result
+    except Exception as e:
+        return {
+            "error": str(e),
+            "status": status + [f"ERROR: {str(e)}"]
+        }
+
+
+root_agent.tools.extend([rally_plan, rally_apply])

@@ -90,3 +90,19 @@ class ChatMessage(BaseModel):
     content: str = Field(..., description="Message content")
     timestamp: datetime = Field(default_factory=datetime.utcnow)
     metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class Component(BaseModel):
+    """Component in the knowledge graph."""
+    name: str = Field(..., description="Component name")
+    files: List[str] = Field(default_factory=list, description="Files in this component")
+    imports: List[str] = Field(default_factory=list, description="External imports")
+    exports: List[str] = Field(default_factory=list, description="Exported symbols")
+    dependencies: List[str] = Field(default_factory=list, description="Component dependencies")
+
+
+class KnowledgeGraph(BaseModel):
+    """Knowledge graph of repository structure."""
+    nodes: Dict[str, Any] = Field(default_factory=dict, description="Graph nodes")
+    components: Dict[str, Component] = Field(default_factory=dict, description="Components")
+    relations: List[Dict[str, str]] = Field(default_factory=list, description="Relations between components")

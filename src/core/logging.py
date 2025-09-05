@@ -96,6 +96,18 @@ def redact_value(key: str, value: Any) -> Any:
     return value
 
 
+def get_logger(name: str) -> logging.Logger:
+    """Get a logger instance.
+    
+    Args:
+        name: Logger name (usually __name__)
+    
+    Returns:
+        Logger instance
+    """
+    return logging.getLogger(name)
+
+
 def setup_logging(
     level: str = "INFO",
     structured: bool = True
