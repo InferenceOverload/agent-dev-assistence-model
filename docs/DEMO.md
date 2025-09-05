@@ -232,15 +232,51 @@ gcloud run logs read --service=adam-ui --region=$GCP_REGION
 ### UI Not Connecting to API
 
 Check CORS settings in `server/api.py`:
-- Ensure your UI origin is in allowed_origins
+- Ensure your UI origin is in allowed_origins (both ports 3000 and 5173)
 - For production, update to your Cloud Run URL
 
 ### SSE Streaming Issues
 
-If messages aren't streaming:
-1. Check browser console for errors
-2. Verify API is running: `curl http://localhost:8000/health`
-3. Check CORS headers
+If messages aren't streaming or you see duplicate streams:
+
+1. **Test SSE directly with curl:**
+```bash
+curl -N "http://localhost:8000/chat/stream?message=hello"
+```
+
+2. **Check for React StrictMode issues:**
+- The UI includes a StrictMode guard to prevent double connections
+- Look for `strictModeGuard` in the browser console logs
+- Ensure only one EventSource is created per message send
+
+3. **Verify the backend is streaming real ADK events:**
+- Check server logs for "Event X: type_name" entries
+- Look for "ADK runners imported successfully" on server start
+- If you see "ADK not available", check your Google ADK installation
+
+4. **Check CORS headers:**
+```bash
+curl -I -X OPTIONS http://localhost:8000/chat/stream \
+  -H "Origin: http://localhost:3000" \
+  -H "Access-Control-Request-Method: GET"
+```
+
+### Backend Status Widget
+
+The backend status widget shows:
+- **Files**: Number of files in loaded repository
+- **Backend**: Current indexing backend (in-memory, vertex-vector-search)
+- **VVS**: Whether Vertex Vector Search is enabled (✓ or ✗)
+- **Chunks**: Number of indexed chunks (if available)
+
+To verify VVS is working:
+```bash
+export VVS_FORCE=1
+export VVS_ENABLED=true
+./scripts/dev.sh
+```
+
+Then load a repository and check the backend status widget shows "VVS: ✓"
 
 ### Mermaid Diagrams Not Rendering
 
@@ -248,6 +284,8 @@ Ensure mermaid is installed:
 ```bash
 cd ui && npm install mermaid
 ```
+
+Diagrams are extracted from tool outputs with `{"mermaid": "..."}` format.
 
 ### VVS Not Working
 
@@ -261,6 +299,8 @@ For small repos, force VVS:
 ```bash
 export VVS_FORCE=1
 ```
+
+Check backend status at http://localhost:8000/backend/status
 
 ## Performance Tips
 

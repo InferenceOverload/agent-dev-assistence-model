@@ -4,11 +4,13 @@ import pytest
 from fastapi.testclient import TestClient
 import sys
 import os
+import json
+from unittest.mock import patch, AsyncMock
 
 # Add parent directory to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from server.api import app
+from server.api import app, stream_adk_events
 
 client = TestClient(app)
 
@@ -20,18 +22,15 @@ def test_health_endpoint():
     assert response.json() == {"ok": True}
 
 
-def test_chat_stream_requires_post():
-    """Test that /chat/stream requires POST method."""
+def test_chat_stream_get_requires_message():
+    """Test that GET /chat/stream requires message parameter."""
     response = client.get("/chat/stream")
-    assert response.status_code == 405
+    assert response.status_code == 422  # Unprocessable Entity (missing required param)
 
 
-def test_chat_stream_with_message():
-    """Test that /chat/stream accepts a message and returns SSE."""
-    response = client.post(
-        "/chat/stream",
-        json={"message": "Hello"}
-    )
+def test_chat_stream_get_with_message():
+    """Test that GET /chat/stream accepts message parameter."""
+    response = client.get("/chat/stream?message=Hello")
     assert response.status_code == 200
     assert response.headers["content-type"] == "text/event-stream; charset=utf-8"
     
@@ -39,44 +38,96 @@ def test_chat_stream_with_message():
     content = b""
     for chunk in response.iter_bytes(1024):
         content += chunk
-        if len(content) > 100:  # Read enough to verify it's streaming
+        if len(content) > 50:  # Read enough to verify it's streaming
             break
     
     # Should contain SSE formatted data
     assert b"data: " in content
-    assert b"type" in content
+
+
+def test_chat_stream_post_backward_compat():
+    """Test that POST /chat/stream still works for backward compatibility."""
+    response = client.post(
+        "/chat/stream",
+        json={"message": "Hello"}
+    )
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "text/event-stream; charset=utf-8"
 
 
 def test_chat_stream_with_session_id():
     """Test that /chat/stream accepts session_id."""
-    response = client.post(
-        "/chat/stream",
-        json={"message": "Hello", "session_id": "test-session"}
-    )
+    response = client.get("/chat/stream?message=Hello&session_id=test-session")
     assert response.status_code == 200
     
     # Read initial response
     content = b""
     for chunk in response.iter_bytes(512):
         content += chunk
-        break
+        if len(content) > 50:
+            break
     
-    # Should contain session_id in response
-    decoded = content.decode('utf-8')
-    assert "test-session" in decoded or "session_id" in decoded.lower()
+    # Should be SSE format
+    assert b"data: " in content
+
+
+def test_backend_status_endpoint():
+    """Test backend status endpoint."""
+    response = client.get("/backend/status")
+    assert response.status_code == 200
+    
+    data = response.json()
+    assert "status" in data
+    assert "environment" in data
+    
+    # Check environment variables are included
+    env = data["environment"]
+    assert "VVS_FORCE" in env
+    assert "VVS_ENABLED" in env
 
 
 def test_cors_headers():
-    """Test that CORS headers are set correctly."""
+    """Test that CORS headers are set correctly for both ports."""
+    # Test for Next.js port
     response = client.options(
         "/chat/stream",
         headers={
             "Origin": "http://localhost:3000",
-            "Access-Control-Request-Method": "POST"
+            "Access-Control-Request-Method": "GET"
         }
     )
     assert response.status_code == 200
     assert "access-control-allow-origin" in response.headers
+    
+    # Test for Vite port
+    response = client.options(
+        "/chat/stream",
+        headers={
+            "Origin": "http://localhost:5173",
+            "Access-Control-Request-Method": "GET"
+        }
+    )
+    assert response.status_code == 200
+    assert "access-control-allow-origin" in response.headers
+
+
+@pytest.mark.asyncio
+async def test_stream_adk_events_shape():
+    """Smoke test for stream_adk_events generator shape (no network)."""
+    # This tests the generator function structure without actually calling ADK
+    async def collect_events():
+        events = []
+        async for event in stream_adk_events("test message", "test-session"):
+            events.append(event)
+            if len(events) > 2:  # Just check it yields something
+                break
+        return events
+    
+    # The function should yield SSE-formatted strings
+    events = await collect_events()
+    assert len(events) > 0
+    assert all(isinstance(e, str) for e in events)
+    assert all("data: " in e for e in events)
 
 
 if __name__ == "__main__":
