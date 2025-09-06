@@ -19,8 +19,11 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Import our ADK agent
+# Import our ADK agent and Runner
 try:
+    from google.adk import Runner
+    from google.adk.sessions import InMemorySessionService, VertexAiSessionService
+    from google.genai.types import Content
     from adam_agent import root_agent
     ADK_AVAILABLE = True
     logger.info(f"ADK agent loaded: {type(root_agent)}")
@@ -28,6 +31,10 @@ except ImportError as e:
     logger.warning(f"ADK agent import failed: {e}")
     ADK_AVAILABLE = False
     root_agent = None
+    Runner = None
+    InMemorySessionService = None
+    VertexAiSessionService = None
+    Content = None
 
 app = FastAPI(title="ADAM Agent API")
 
@@ -47,6 +54,40 @@ class ChatRequest(BaseModel):
     session_id: Optional[str] = None
 
 
+def _make_session_service():
+    """Create appropriate session service based on environment."""
+    if not ADK_AVAILABLE or not InMemorySessionService:
+        return None
+    
+    # Toggle persistent sessions if desired
+    if os.getenv("USE_VERTEX_SESSIONS") in ("1", "true", "TRUE", "yes", "YES"):
+        project = os.getenv("GOOGLE_CLOUD_PROJECT", "")
+        location = os.getenv("GOOGLE_CLOUD_LOCATION", "us-central1")
+        if VertexAiSessionService and project:
+            try:
+                return VertexAiSessionService(project=project, location=location)
+            except Exception as e:
+                logger.warning(f"Failed to create VertexAiSessionService: {e}")
+    
+    return InMemorySessionService()
+
+
+def _make_runner():
+    """Create ADK Runner with proper configuration."""
+    if not ADK_AVAILABLE or not Runner or not root_agent:
+        return None
+    
+    session_service = _make_session_service()
+    if not session_service:
+        return None
+    
+    return Runner(
+        app_name=os.getenv("APP_NAME", "adam"),
+        agent=root_agent,
+        session_service=session_service,
+    )
+
+
 @app.get("/health")
 async def health():
     """Health check endpoint."""
@@ -62,105 +103,206 @@ async def stream_agent_response(message: str, session_id: str) -> AsyncIterator[
         yield f"data: {json.dumps({'type': 'error', 'message': 'ADK agent not available'})}\n\n"
         return
     
+    # Try to create and use ADK Runner
+    runner = None
     try:
-        # Check if we should use run_async or run_live
-        if hasattr(root_agent, 'run_async'):
-            logger.info("Using run_async method")
+        runner = _make_runner()
+        if runner:
+            logger.info("Using ADK Runner for streaming")
             
-            # Create a state dict for the session
-            state = {"session_id": session_id}
-            
-            # Run the agent asynchronously
+            # Ensure session exists (create if needed)
+            session_id_to_use = session_id or "default"
             try:
-                # First, let's try to run it and get the result
-                result = await root_agent.run_async(
-                    input_text=message,
-                    state=state
-                )
-                
-                # Process the result
-                if isinstance(result, dict):
-                    # If result has text content
-                    if 'text' in result:
-                        yield f"data: {json.dumps({'type': 'llm_output', 'text': result['text']})}\n\n"
-                    
-                    # If result has tool calls
-                    if 'tool_calls' in result:
-                        for tool_call in result.get('tool_calls', []):
-                            yield f"data: {json.dumps({'type': 'tool_start', 'name': tool_call.get('name', 'unknown'), 'args': tool_call.get('args', {})})}\n\n"
-                            yield f"data: {json.dumps({'type': 'tool_end', 'name': tool_call.get('name', 'unknown'), 'output': tool_call.get('output', '')})}\n\n"
-                    
-                    # If result has output directly
-                    if 'output' in result:
-                        output = result['output']
-                        if isinstance(output, str):
-                            yield f"data: {json.dumps({'type': 'llm_output', 'text': output})}\n\n"
-                        else:
-                            yield f"data: {json.dumps({'type': 'llm_output', 'text': json.dumps(output)})}\n\n"
-                    
-                    # Log the full result for debugging
-                    logger.info(f"Agent result keys: {result.keys() if isinstance(result, dict) else 'not a dict'}")
-                    
-                elif isinstance(result, str):
-                    # Simple text response
-                    yield f"data: {json.dumps({'type': 'llm_output', 'text': result})}\n\n"
-                else:
-                    # Unknown result type
-                    logger.warning(f"Unknown result type: {type(result)}")
-                    yield f"data: {json.dumps({'type': 'llm_output', 'text': str(result)})}\n\n"
-                
+                # Try to get existing session
+                await runner.session_service.get_session(session_id_to_use)
+                logger.info(f"Using existing session: {session_id_to_use}")
             except Exception as e:
-                logger.error(f"Error running agent: {e}", exc_info=True)
-                # Fallback: call the agent tools directly for demonstration
-                logger.info("Falling back to direct tool invocation")
-                
-                # Import the tools to call them directly
-                from adam_agent import load_repo, ask, index, ingest, decide
-                
-                # Simple pattern matching for commands
-                if "load" in message.lower() and ("repo" in message.lower() or "github" in message.lower()):
-                    # Extract URL from message
-                    words = message.split()
-                    url = None
-                    for word in words:
-                        if "github.com" in word or "http" in word:
-                            url = word.strip()
-                            break
-                    
-                    if url:
-                        yield f"data: {json.dumps({'type': 'tool_start', 'name': 'load_repo', 'args': {'url': url}})}\n\n"
-                        try:
-                            result = load_repo(url)
-                            yield f"data: {json.dumps({'type': 'tool_end', 'name': 'load_repo', 'output': result})}\n\n"
-                            files_count = result.get('files', 0)
-                            commit_hash = result.get('commit', 'unknown')
-                            yield f"data: {json.dumps({'type': 'llm_output', 'text': f'Repository loaded successfully. Files: {files_count}, Commit: {commit_hash}'})}\n\n"
-                        except Exception as tool_error:
-                            yield f"data: {json.dumps({'type': 'tool_end', 'name': 'load_repo', 'output': str(tool_error)})}\n\n"
-                            yield f"data: {json.dumps({'type': 'llm_output', 'text': f'Error loading repository: {tool_error}'})}\n\n"
-                    else:
-                        yield f"data: {json.dumps({'type': 'llm_output', 'text': 'Please provide a repository URL to load.'})}\n\n"
-                
-                elif "ask" in message.lower() or "what" in message.lower() or "explain" in message.lower():
-                    # Use the ask tool
-                    query = message
-                    yield f"data: {json.dumps({'type': 'tool_start', 'name': 'ask', 'args': {'query': query}})}\n\n"
-                    try:
-                        result = ask(query)
-                        yield f"data: {json.dumps({'type': 'tool_end', 'name': 'ask', 'output': 'Answer generated'})}\n\n"
-                        answer = result.get('answer', 'No answer available')
-                        yield f"data: {json.dumps({'type': 'llm_output', 'text': answer})}\n\n"
-                    except Exception as tool_error:
-                        yield f"data: {json.dumps({'type': 'tool_end', 'name': 'ask', 'output': str(tool_error)})}\n\n"
-                        yield f"data: {json.dumps({'type': 'llm_output', 'text': f'Error: {tool_error}'})}\n\n"
-                
+                # Create new session if it doesn't exist
+                logger.info(f"Session {session_id_to_use} not found, creating new session")
+                try:
+                    await runner.session_service.create_session(
+                        app_name=os.getenv("APP_NAME", "adam"),
+                        user_id="user",
+                        session_id=session_id_to_use,
+                        state={}
+                    )
+                    logger.info(f"Created new session: {session_id_to_use}")
+                except Exception as create_error:
+                    logger.error(f"Failed to create session: {create_error}")
+                    # Fallback to default session
+                    session_id_to_use = "default"
+            
+            # Create Content object for the message
+            message_content = Content(parts=[{"text": message}]) if Content else message
+            
+            # Stream structured ADK events
+            async for event in runner.run_async(
+                user_id="user",  # Default user ID
+                session_id=session_id_to_use,
+                new_message=message_content,  # The message as Content object
+                state_delta=None,  # Optional state updates
+            ):
+                # Check if event is a dict or has attributes
+                if isinstance(event, dict):
+                    # Forward the event as-is
+                    yield f"data: {json.dumps(event)}\n\n"
+                    await asyncio.sleep(0)
                 else:
-                    # Default response
-                    yield f"data: {json.dumps({'type': 'llm_output', 'text': f'I can help you analyze repositories. Try: \"Load repository [URL]\" or \"What does this code do?\"'})}\n\n"
+                    # Process event attributes
+                    event_data = {}
+                    if hasattr(event, 'type'):
+                        event_data['type'] = event.type
+                        
+                        if event.type in ('text', 'llm_output'):
+                            event_data['text'] = getattr(event, 'text', '')
+                        elif event.type == 'tool_call_start':
+                            event_data['name'] = getattr(event, 'tool_name', 'unknown')
+                            event_data['args'] = getattr(event, 'tool_args', {})
+                        elif event.type == 'tool_call_end':
+                            event_data['name'] = getattr(event, 'tool_name', 'unknown')
+                            event_data['output'] = getattr(event, 'tool_output', '')
+                    
+                    if event_data:
+                        yield f"data: {json.dumps(event_data)}\n\n"
+                        await asyncio.sleep(0)
+            
+            # Send completion event
+            yield f"data: {json.dumps({'type': 'complete'})}\n\n"
+            return
+            
+    except Exception as runner_error:
+        logger.error(f"Runner error: {runner_error}", exc_info=True)
+        # Fall through to direct tool invocation
+        
+        # Fallback: call the agent tools directly for demonstration
+        logger.info("Using direct tool invocation fallback")
+        
+        # Import the tools to call them directly
+        from adam_agent import load_repo, ask, index, ingest, decide
+        
+        # Simple pattern matching for commands
+        if "load" in message.lower() and ("repo" in message.lower() or "github" in message.lower()):
+            # Extract URL from message
+            words = message.split()
+            url = None
+            for word in words:
+                if "github.com" in word or "http" in word:
+                    url = word.strip()
+                    break
+            
+            if url:
+                yield f"data: {json.dumps({'type': 'tool_start', 'name': 'load_repo', 'args': {'url': url}})}\n\n"
+                await asyncio.sleep(0)
+                
+                try:
+                    result = load_repo(url)
+                    logger.info(f"Load_repo tool returned: {type(result)}")
+                    
+                    # Extract key info
+                    files_count = result.get('files', 0) if isinstance(result, dict) else 0
+                    commit_hash = result.get('commit', 'unknown') if isinstance(result, dict) else 'unknown'
+                    
+                    yield f"data: {json.dumps({'type': 'tool_end', 'name': 'load_repo', 'output': 'Repository loaded'})}\n\n"
+                    await asyncio.sleep(0)
+                    
+                    yield f"data: {json.dumps({'type': 'llm_output', 'text': f'Repository loaded successfully. Files: {files_count}, Commit: {commit_hash}'})}\n\n"
+                    await asyncio.sleep(0)
+                    
+                except Exception as tool_error:
+                    logger.error(f"Load_repo tool error: {tool_error}", exc_info=True)
+                    yield f"data: {json.dumps({'type': 'tool_end', 'name': 'load_repo', 'output': str(tool_error)})}\n\n"
+                    yield f"data: {json.dumps({'type': 'llm_output', 'text': f'Error loading repository: {tool_error}'})}\n\n"
+            else:
+                yield f"data: {json.dumps({'type': 'llm_output', 'text': 'Please provide a repository URL to load.'})}\n\n"
+        
+        elif "what" in message.lower() or "explain" in message.lower() or "tell me" in message.lower():
+            # Use the ask tool
+            query = message
+            yield f"data: {json.dumps({'type': 'tool_start', 'name': 'ask', 'args': {'query': query}})}\n\n"
+            await asyncio.sleep(0)  # Allow UI to update
+            
+            try:
+                result = ask(query)
+                logger.info(f"Ask tool returned: {type(result)}")
+                
+                # Handle different result types
+                if isinstance(result, dict):
+                    answer = result.get('answer', result.get('response', str(result)))
+                else:
+                    answer = str(result) if result else 'No answer available'
+                
+                # Send tool end first
+                yield f"data: {json.dumps({'type': 'tool_end', 'name': 'ask', 'output': 'Query processed'})}\n\n"
+                await asyncio.sleep(0)  # Allow UI to update
+                
+                # Then send the actual answer as llm_output
+                if answer:
+                    yield f"data: {json.dumps({'type': 'llm_output', 'text': answer})}\n\n"
+                    await asyncio.sleep(0)  # Allow UI to update
+                    
+            except Exception as tool_error:
+                logger.error(f"Ask tool error: {tool_error}", exc_info=True)
+                yield f"data: {json.dumps({'type': 'tool_end', 'name': 'ask', 'output': str(tool_error)})}\n\n"
+                yield f"data: {json.dumps({'type': 'llm_output', 'text': f'Error: {tool_error}'})}\n\n"
+        
+        elif "index" in message.lower():
+            # Build index
+            yield f"data: {json.dumps({'type': 'tool_start', 'name': 'index', 'args': {}})}\n\n"
+            await asyncio.sleep(0)
+            
+            try:
+                result = index()
+                logger.info(f"Index tool returned: {type(result)}")
+                
+                # Extract key info from result
+                vector_count = result.get("vector_count", 0) if isinstance(result, dict) else 0
+                backend = result.get("backend", "unknown") if isinstance(result, dict) else "unknown"
+                
+                yield f"data: {json.dumps({'type': 'tool_end', 'name': 'index', 'output': 'Index built successfully'})}\n\n"
+                await asyncio.sleep(0)
+                
+                yield f"data: {json.dumps({'type': 'llm_output', 'text': f'Index built: {vector_count} vectors, backend: {backend}'})}\n\n"
+                await asyncio.sleep(0)
+                
+            except Exception as tool_error:
+                logger.error(f"Index tool error: {tool_error}", exc_info=True)
+                yield f"data: {json.dumps({'type': 'tool_end', 'name': 'index', 'output': str(tool_error)})}\n\n"
+                yield f"data: {json.dumps({'type': 'llm_output', 'text': f'Error: {tool_error}'})}\n\n"
+        
+        elif "ingest" in message.lower():
+            # Ingest repository
+            yield f"data: {json.dumps({'type': 'tool_start', 'name': 'ingest', 'args': {}})}\n\n"
+            await asyncio.sleep(0)
+            
+            try:
+                result = ingest()
+                logger.info(f"Ingest tool returned: {type(result)}")
+                
+                # Extract file count
+                file_count = len(result.get("files", [])) if isinstance(result, dict) else 0
+                
+                yield f"data: {json.dumps({'type': 'tool_end', 'name': 'ingest', 'output': 'Repository ingested'})}\n\n"
+                await asyncio.sleep(0)
+                
+                yield f"data: {json.dumps({'type': 'llm_output', 'text': f'Repository ingested: {file_count} files'})}\n\n"
+                await asyncio.sleep(0)
+                
+            except Exception as tool_error:
+                logger.error(f"Ingest tool error: {tool_error}", exc_info=True)
+                yield f"data: {json.dumps({'type': 'tool_end', 'name': 'ingest', 'output': str(tool_error)})}\n\n"
+                yield f"data: {json.dumps({'type': 'llm_output', 'text': f'Error: {tool_error}'})}\n\n"
         
         else:
-            logger.warning("Agent doesn't have run_async method")
-            yield f"data: {json.dumps({'type': 'error', 'message': 'Agent configuration error'})}\n\n"
+            # Default response with help
+            help_text = """I can help you analyze repositories. Here are some commands you can try:
+
+1. Load a repository: "Load repository https://github.com/..."
+2. Ask questions: "What does this code do?"
+3. Build index: "Index the repository"
+4. Ingest files: "Ingest the current repository"
+
+For the best experience, try using 'adk web' for Google's built-in UI, or 'adk api_server' for the REST API."""
+            yield f"data: {json.dumps({'type': 'llm_output', 'text': help_text})}\n\n"
         
         # Send completion event
         yield f"data: {json.dumps({'type': 'complete'})}\n\n"
@@ -292,17 +434,17 @@ async def proxy_to_adk_api(request: ChatRequest):
             )
             return response.json()
     except Exception as e:
-        # Fallback to direct agent call
-        logger.info(f"ADK API server not available, using direct call: {e}")
+        # Fallback to direct tool call
+        logger.info(f"ADK API server not available, using direct tool call: {e}")
         
-        if hasattr(root_agent, 'run_async'):
-            result = await root_agent.run_async(
-                input_text=request.message,
-                state={"session_id": request.session_id}
-            )
+        # Since we can't use run_async directly, call tools instead
+        from adam_agent import ask
+        
+        try:
+            result = ask(request.message)
             return {"result": result}
-        else:
-            raise HTTPException(status_code=500, detail="Agent doesn't support async execution")
+        except Exception as tool_error:
+            raise HTTPException(status_code=500, detail=str(tool_error))
 
 
 # For serving static files in production
