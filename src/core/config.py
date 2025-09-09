@@ -67,6 +67,24 @@ class SessionConfig(BaseModel):
     use_memory_bank: bool = Field(default=False)
     
 
+class ProbeConfig(BaseModel):
+    """Probe planning configuration."""
+    max_iterations: int = Field(default=5, description="Maximum probe iterations")
+    enabled: bool = Field(default=True, description="Enable iterative probe planning")
+    
+
+class TaskDecompConfig(BaseModel):
+    """Task decomposition configuration."""  
+    enabled: bool = Field(default=True, description="Enable task decomposition")
+    max_files: int = Field(default=20, description="Maximum files to modify per task")
+    
+
+class SynthesisConfig(BaseModel):
+    """Evidence synthesis configuration."""
+    mode: str = Field(default="detailed", description="Synthesis mode: detailed or concise")
+    max_evidence_items: int = Field(default=15, description="Maximum evidence items to synthesize")
+    
+
 class WorkspaceConfig(BaseModel):
     """Workspace storage configuration."""
     storage_type: str = Field(default="local", description="Storage type: local or gcs")
@@ -84,6 +102,9 @@ class AppConfig(BaseModel):
     github: GitHubConfig = Field(default_factory=GitHubConfig)
     session: SessionConfig = Field(default_factory=SessionConfig)
     workspace: WorkspaceConfig = Field(default_factory=WorkspaceConfig)
+    probe: ProbeConfig = Field(default_factory=ProbeConfig)
+    task_decomp: TaskDecompConfig = Field(default_factory=TaskDecompConfig)
+    synthesis: SynthesisConfig = Field(default_factory=SynthesisConfig)
     
 
 def load_config(config_path: Optional[str] = None) -> AppConfig:
@@ -124,6 +145,20 @@ def load_config(config_path: Optional[str] = None) -> AppConfig:
         config_dict.setdefault("workspace", {})["gcs_bucket"] = gcs_bucket
     if gcs_prefix := os.getenv("ADAM_GCS_PREFIX"):
         config_dict.setdefault("workspace", {})["gcs_prefix"] = gcs_prefix
+    
+    # Probe config overrides
+    if probe_max := os.getenv("PROBE_MAX_ITERATIONS"):
+        config_dict.setdefault("probe", {})["max_iterations"] = int(probe_max)
+    if probe_enabled := os.getenv("PROBE_ENABLED"):
+        config_dict.setdefault("probe", {})["enabled"] = probe_enabled.lower() in ("true", "1", "yes")
+    
+    # Task decomposition overrides
+    if decomp_enabled := os.getenv("TASK_DECOMP_ENABLED"):
+        config_dict.setdefault("task_decomp", {})["enabled"] = decomp_enabled.lower() in ("true", "1", "yes")
+    
+    # Synthesis mode overrides
+    if synthesis_mode := os.getenv("SYNTHESIS_MODE"):
+        config_dict.setdefault("synthesis", {})["mode"] = synthesis_mode
         
     return AppConfig(**config_dict)
 

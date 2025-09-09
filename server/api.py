@@ -11,12 +11,28 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 import sys
 import traceback
+from pathlib import Path
 
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# Load environment variables from .env files
+try:
+    from dotenv import load_dotenv
+    # Try loading from adam_agent/.env first (has actual keys)
+    adam_env = Path(__file__).parent.parent / "adam_agent" / ".env"
+    if adam_env.exists():
+        load_dotenv(adam_env, override=True)
+        print(f"Loaded environment from {adam_env}")
+    # Also load root .env if it exists
+    root_env = Path(__file__).parent.parent / ".env"
+    if root_env.exists():
+        load_dotenv(root_env, override=False)  # Don't override adam_agent settings
+except ImportError:
+    pass  # dotenv not installed
+
 # Configure logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.DEBUG if os.getenv("DEBUG") else logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Import our ADK agent and Runner
@@ -72,20 +88,33 @@ def _make_session_service():
     return InMemorySessionService()
 
 
-def _make_runner():
-    """Create ADK Runner with proper configuration."""
+# Create a singleton runner instance
+_runner_instance = None
+_session_service_instance = None
+
+def _get_or_create_runner():
+    """Get or create a singleton ADK Runner instance."""
+    global _runner_instance, _session_service_instance
+    
+    if _runner_instance:
+        return _runner_instance
+    
     if not ADK_AVAILABLE or not Runner or not root_agent:
         return None
     
-    session_service = _make_session_service()
-    if not session_service:
+    if not _session_service_instance:
+        _session_service_instance = _make_session_service()
+    
+    if not _session_service_instance:
         return None
     
-    return Runner(
+    _runner_instance = Runner(
         app_name=os.getenv("APP_NAME", "adam"),
         agent=root_agent,
-        session_service=session_service,
+        session_service=_session_service_instance,
     )
+    logger.info("Created singleton Runner instance")
+    return _runner_instance
 
 
 @app.get("/health")
@@ -106,7 +135,7 @@ async def stream_agent_response(message: str, session_id: str) -> AsyncIterator[
     # Try to create and use ADK Runner
     runner = None
     try:
-        runner = _make_runner()
+        runner = _get_or_create_runner()
         if runner:
             logger.info("Using ADK Runner for streaming")
             
@@ -136,12 +165,22 @@ async def stream_agent_response(message: str, session_id: str) -> AsyncIterator[
             message_content = Content(parts=[{"text": message}]) if Content else message
             
             # Stream structured ADK events
+            event_count = 0
             async for event in runner.run_async(
                 user_id="user",  # Default user ID
                 session_id=session_id_to_use,
                 new_message=message_content,  # The message as Content object
                 state_delta=None,  # Optional state updates
             ):
+                event_count += 1
+                logger.debug(f"Event {event_count}: {type(event)}")
+                
+                # Log event attributes for debugging
+                if hasattr(event, 'model_dump'):
+                    logger.debug(f"Event dump: {event.model_dump()}")
+                elif hasattr(event, '__dict__'):
+                    logger.debug(f"Event dict: {event.__dict__}")
+                
                 # Check if event is a dict or has attributes
                 if isinstance(event, dict):
                     # Forward the event as-is
@@ -150,21 +189,55 @@ async def stream_agent_response(message: str, session_id: str) -> AsyncIterator[
                 else:
                     # Process event attributes
                     event_data = {}
-                    if hasattr(event, 'type'):
-                        event_data['type'] = event.type
+                    
+                    # Handle ADK Event with content
+                    if hasattr(event, 'content') and event.content:
+                        # Extract text from content parts
+                        content = event.content
+                        if hasattr(content, 'parts'):
+                            text_parts = []
+                            for part in content.parts:
+                                if hasattr(part, 'text') and part.text:
+                                    text_parts.append(part.text)
+                            if text_parts:
+                                combined_text = ''.join(text_parts)
+                                event_data = {'type': 'llm_output', 'text': combined_text}
+                    
+                    # Handle tool calls if present
+                    elif hasattr(event, 'tool_calls'):
+                        for tool_call in event.tool_calls:
+                            if hasattr(tool_call, 'name'):
+                                event_data = {
+                                    'type': 'tool_call',
+                                    'name': tool_call.name,
+                                    'args': getattr(tool_call, 'args', {})
+                                }
+                                yield f"data: {json.dumps(event_data)}\n\n"
+                                await asyncio.sleep(0)
+                        continue  # Already yielded tool calls
+                    
+                    # Handle other event types
+                    elif hasattr(event, '__class__'):
+                        event_type = event.__class__.__name__
                         
-                        if event.type in ('text', 'llm_output'):
-                            event_data['text'] = getattr(event, 'text', '')
-                        elif event.type == 'tool_call_start':
-                            event_data['name'] = getattr(event, 'tool_name', 'unknown')
-                            event_data['args'] = getattr(event, 'tool_args', {})
-                        elif event.type == 'tool_call_end':
-                            event_data['name'] = getattr(event, 'tool_name', 'unknown')
-                            event_data['output'] = getattr(event, 'tool_output', '')
+                        if 'ToolCallStart' in event_type:
+                            event_data = {
+                                'type': 'tool_start',
+                                'name': getattr(event, 'tool_name', 'unknown'),
+                                'args': getattr(event, 'tool_args', {})
+                            }
+                        elif 'ToolCallEnd' in event_type:
+                            event_data = {
+                                'type': 'tool_end',
+                                'name': getattr(event, 'tool_name', 'unknown'),
+                                'output': getattr(event, 'tool_output', '')
+                            }
                     
                     if event_data:
                         yield f"data: {json.dumps(event_data)}\n\n"
                         await asyncio.sleep(0)
+            
+            logger.info(f"Streamed {event_count} events from ADK Runner")
             
             # Send completion event
             yield f"data: {json.dumps({'type': 'complete'})}\n\n"

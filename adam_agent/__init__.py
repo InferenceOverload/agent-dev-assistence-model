@@ -107,9 +107,11 @@ root_agent = Agent(
     model="gemini-2.0-flash-exp",  # Use stable flash experimental model
     description="Repo analysis & RAG helper",
     instruction=(
-        "You are a repository analysis assistant for software architects.\n"
+        "You are ADAM, a friendly repository analysis assistant.\n"
         "\n"
-        "MANDATORY WORKFLOW:\n"
+        "IMPORTANT: When users greet you casually (hi, hello, hey, yo, yooo, etc.), just respond with a brief, friendly greeting like 'Hey! How can I help you today?' or 'Hello! What can I do for you?'. Never mention instructions or system setup.\n"
+        "\n"
+        "ANALYSIS WORKFLOW (for technical questions only):\n"
         "1) Always gather EVIDENCE before answering: call summarize_repo() or collect_evidence(query,k) first.\n"
         "2) Synthesize ONLY from tool outputs (doc_pack excerpts + file paths). Do NOT rely on prior knowledge.\n"
         "\n"
@@ -340,23 +342,79 @@ def pr_draft(patch: str) -> dict:
 root_agent.tools.extend([plan, dev_pr, gen_code, gen_code_from_session, pr_draft])
 
 
+def iterative_probe_answer(query: str, max_probes: int = 5) -> dict:
+    """
+    Answer a query using iterative probe planning and evidence synthesis.
+    
+    Parameters:
+        query: User's question about the repository.
+        max_probes: Maximum number of probes to execute (default 5).
+    
+    Returns:
+        Dictionary with answer, evidence_used, and probe_results.
+    """
+    return _orch.iterative_answer(query=query, max_probes=max_probes)
+
+
+# Add the new iterative answer tool to the agent
+root_agent.tools.append(iterative_probe_answer)
+
+
 def deliver_pr(requirement: str) -> dict:
     """
-    End-to-end orchestration:
-      1) plan(requirement) -> stories
-      2) dev_pr() -> dev plan
+    End-to-end orchestration with enhanced task decomposition:
+      1) decompose_feature_request() -> detailed plan
+      2) plan(requirement) -> stories
+      3) dev_pr() -> dev plan
       3) normalize impacted_paths against actual repo files
       4) gen_code_from_session() -> ProposedPatch
       5) pr_draft(patch) -> PRDraft
     Returns: {"stories":[...], "devplan":{...}, "patch":{...}, "pr":{...}, "status":[...]}
     """
+    from ..agents.task_decomposer import decompose_feature_request
+    from ..analysis.models import RepoFacts
+    from ..agents.dev_pr import create_implementation_plan
+    
     status = [f"deliver_pr: {requirement[:120]}"]
-    # 1) plan
+    
+    # 0) Use task decomposer for better planning
+    repo_facts = RepoFacts()
+    if _orch.code_map:
+        # Populate repo facts from existing analysis
+        repo_facts.entry_points = _orch.code_map.files[:5]
+        # TODO: Extract actual frameworks and components from code_map
+    
+    decomposition = decompose_feature_request(requirement, repo_facts)
+    status.append(f"decomposed: complexity={decomposition['complexity']}, effort={decomposition['estimated_effort_hours']}h")
+    
+    # 1) plan - now enhanced with decomposition insights
     p = plan(requirement)
     status += p.get("status", [])
     stories = p.get("stories", [])
-    # 2) dev plan
-    d = dev_pr()
+    
+    # Enhance stories with decomposition data
+    if stories:
+        stories[0]["impacted_paths"] = decomposition["files_to_modify"][:5]
+        stories[0]["tests_needed"] = decomposition["tests_needed"][:3]
+    
+    # 2) dev plan - now using create_implementation_plan
+    repo_context = {
+        "components": repo_facts.components if repo_facts else [],
+        "frameworks": repo_facts.frameworks if repo_facts else [],
+        "languages": repo_facts.languages if repo_facts else {}
+    }
+    
+    impl_plan = create_implementation_plan(stories, repo_context)
+    
+    # Convert to dev plan format
+    d = {
+        "branch": f"feat/{impl_plan.get('story_id', 'feature')}",
+        "impacted_paths": [fc["path"] for fc in impl_plan.get("file_changes", [])],
+        "tests": [ts["type"] for ts in impl_plan.get("test_strategy", [])][:3],
+        "notes": impl_plan.get("design_decisions", [])[:2],
+        "complexity": impl_plan.get("complexity", "medium"),
+        "status": [f"created implementation plan for {len(impl_plan.get('file_changes', []))} files"]
+    }
     status += d.get("status", [])
     # 3) normalize impacted paths
     try:

@@ -374,3 +374,92 @@ class OrchestratorAgent:
                 unique_packs.append(item)
         
         return {"doc_pack": unique_packs, "status": [f"repo_synopsis collected {total} snippets from {len(seeds)} seeded queries"]}
+    
+    def iterative_answer(self, query: str, max_probes: int = 5) -> dict:
+        """
+        Answer a query using iterative probe planning and evidence synthesis.
+        
+        Args:
+            query: User's question
+            max_probes: Maximum number of probes to execute
+            
+        Returns:
+            Dictionary with answer, evidence_used, and probe_results
+        """
+        from ..agents.probe_planner import create_probe_plan
+        from ..tools.evidence_synthesis import synthesize_evidence
+        from ..analysis.models import RepoFacts
+        
+        status = [f"iterative_answer: {query[:80]}"]
+        
+        # Ensure we have an index
+        retriever = self.storage_factory.session_store().get_retriever(self.session_id)
+        if retriever is None:
+            status.append("no index found; indexing now...")
+            if self.code_map is None:
+                self.ingest()
+            if self.decision is None:
+                self.size_and_decide()
+            self.index()
+            retriever = self.storage_factory.session_store().get_retriever(self.session_id)
+            assert retriever is not None, "Indexing failed"
+        
+        # Create repo facts for probe planning
+        repo_facts = RepoFacts(
+            languages={"python": 1} if self.code_map else {},
+            frameworks=[],
+            entry_points=self.code_map.files[:5] if self.code_map else []
+        )
+        
+        # Step 1: Create probe plan
+        probes = create_probe_plan(query, repo_facts)
+        status.append(f"created {len(probes)} probes")
+        
+        # Step 2: Execute probes and collect evidence
+        evidence_packs = []
+        probe_results = []
+        
+        for i, probe in enumerate(probes[:max_probes]):
+            probe_query = probe.get("query", "")
+            probe_type = probe.get("type", "code_search")
+            
+            status.append(f"executing probe {i+1}/{len(probes)}: {probe_type}")
+            
+            # Execute probe using existing collect_evidence
+            evidence = self.collect_evidence(probe_query, k=probe.get("expected_files", 10))
+            doc_pack = evidence.get("doc_pack", [])
+            
+            probe_results.append({
+                "probe": probe,
+                "results_count": len(doc_pack),
+                "top_paths": [item["path"] for item in doc_pack[:3]]
+            })
+            
+            if doc_pack:
+                evidence_packs.append({
+                    "query": probe_query,
+                    "type": probe_type,
+                    "doc_pack": doc_pack
+                })
+        
+        status.append(f"collected {len(evidence_packs)} evidence packs")
+        
+        # Step 3: Synthesize evidence into answer
+        if evidence_packs:
+            answer = synthesize_evidence(query, evidence_packs)
+            evidence_used = []
+            for pack in evidence_packs:
+                for item in pack["doc_pack"][:3]:  # Top 3 from each pack
+                    evidence_used.append(item["path"])
+        else:
+            answer = "No relevant information found for your query."
+            evidence_used = []
+        
+        status.append("synthesis complete")
+        
+        return {
+            "answer": answer,
+            "evidence_used": list(set(evidence_used)),  # Deduplicated paths
+            "probe_results": probe_results,
+            "status": status
+        }
