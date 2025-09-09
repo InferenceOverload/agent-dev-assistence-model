@@ -10,37 +10,93 @@ env/
 *.egg-info/
 dist/
 build/
+*.egg
+*.wheel
 
-
-# Claude AI files
-.claude
-
-# GitHub workflow files (if you don't want them tracked)
-.githubfiles/
-
-# Other common files to ignore
-node_modules/
+# Environment files
 .env
-*.log
-.DS_Store
-
-# Environment
-.env
+.env.*
 .env.local
 .env.*.local
+*.env
+
+# Workspace and temp files
+.workspace/
+workspace/
+tmp/
+temp/
+*.tmp
+*.temp
+
+# Next.js / UI build files
+ui/.next/
+ui/out/
+ui/build/
+ui/dist/
+.next/
+node_modules/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
 
 # IDE
 .vscode/
 .idea/
 *.swp
 *.swo
+*.swn
 .DS_Store
+Thumbs.db
 
 # Testing
 .pytest_cache/
 .coverage
+.coverage.*
 htmlcov/
+*.cover
+.hypothesis/
+.tox/
+coverage.xml
+*.coveragerc
 
-# ADK
+# ADK/GCP
 .adk/
+.gcp/
+service-account-key.json
+credentials.json
+
+# Claude AI files
+.claude
+
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Git
+*.orig
+*.rej
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Logs
+logs/
 *.log
+*.out
+*.err
+
+# Cache
+.cache/
+*.cache
