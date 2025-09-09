@@ -10,7 +10,7 @@ from unittest.mock import patch, AsyncMock
 # Add parent directory to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from server.api import app, stream_adk_events
+from server.api import app
 
 client = TestClient(app)
 
@@ -19,7 +19,9 @@ def test_health_endpoint():
     """Test that /health endpoint returns ok."""
     response = client.get("/health")
     assert response.status_code == 200
-    assert response.json() == {"ok": True}
+    data = response.json()
+    assert data["ok"] is True
+    # API now also returns adk_available status
 
 
 def test_chat_stream_get_requires_message():
@@ -111,23 +113,8 @@ def test_cors_headers():
     assert "access-control-allow-origin" in response.headers
 
 
-@pytest.mark.asyncio
-async def test_stream_adk_events_shape():
-    """Smoke test for stream_adk_events generator shape (no network)."""
-    # This tests the generator function structure without actually calling ADK
-    async def collect_events():
-        events = []
-        async for event in stream_adk_events("test message", "test-session"):
-            events.append(event)
-            if len(events) > 2:  # Just check it yields something
-                break
-        return events
-    
-    # The function should yield SSE-formatted strings
-    events = await collect_events()
-    assert len(events) > 0
-    assert all(isinstance(e, str) for e in events)
-    assert all("data: " in e for e in events)
+# Removed test_stream_adk_events_shape as stream_adk_events function no longer exists
+# The API has been refactored to use different streaming mechanisms
 
 
 if __name__ == "__main__":
