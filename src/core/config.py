@@ -51,7 +51,12 @@ class RallyConfig(BaseModel):
     """Rally configuration."""
     api_key: Optional[str] = None
     workspace: Optional[str] = None
+    workspace_id: Optional[str] = None  # Rally workspace ObjectID
     project: Optional[str] = None
+    project_id: Optional[str] = None  # Rally project ObjectID
+    base_url: str = Field(default="https://rally1.rallydev.com", description="Rally base URL")
+    api_version: str = Field(default="v2.0", description="Rally API version")
+    timeout: int = Field(default=30, description="API request timeout in seconds")
     
 
 class GitHubConfig(BaseModel):
@@ -131,8 +136,19 @@ def load_config(config_path: Optional[str] = None) -> AppConfig:
         config_dict.setdefault("gcp", {})["project"] = project
     if location := os.getenv("GCP_LOCATION"):
         config_dict.setdefault("gcp", {})["location"] = location
+    # Rally configuration overrides
     if rally_key := os.getenv("RALLY_API_KEY"):
         config_dict.setdefault("rally", {})["api_key"] = rally_key
+    if rally_workspace := os.getenv("RALLY_WORKSPACE"):
+        config_dict.setdefault("rally", {})["workspace"] = rally_workspace
+    if rally_workspace_id := os.getenv("RALLY_WORKSPACE_ID"):
+        config_dict.setdefault("rally", {})["workspace_id"] = rally_workspace_id
+    if rally_project := os.getenv("RALLY_PROJECT"):
+        config_dict.setdefault("rally", {})["project"] = rally_project
+    if rally_project_id := os.getenv("RALLY_PROJECT_ID"):
+        config_dict.setdefault("rally", {})["project_id"] = rally_project_id
+    if rally_base_url := os.getenv("RALLY_BASE_URL"):
+        config_dict.setdefault("rally", {})["base_url"] = rally_base_url
     if github_token := os.getenv("GITHUB_TOKEN"):
         config_dict.setdefault("github", {})["token"] = github_token
     

@@ -388,12 +388,13 @@ def preview_payload(plan: Dict[str, Any]) -> Dict[str, Any]:
     return preview
 
 
-def apply_to_rally(plan: Dict[str, Any], confirm: bool) -> Dict[str, Any]:
-    """Apply plan to Rally, creating actual work items.
+def apply_to_rally(plan: Dict[str, Any], confirm: bool, feature_id: Optional[str] = None) -> Dict[str, Any]:
+    """Apply plan to Rally, creating actual work items with optional feature validation.
     
     Args:
         plan: Plan dictionary
         confirm: If False, return preview; if True, create items
+        feature_id: Optional existing feature ID to validate against
         
     Returns:
         Result dictionary with created IDs or preview
@@ -421,17 +422,54 @@ def apply_to_rally(plan: Dict[str, Any], confirm: bool) -> Dict[str, Any]:
             "preview": preview_payload(plan)
         }
         
+    # Validate against existing feature if provided
+    parent_feature_id = feature_id
+    if feature_id:
+        try:
+            # Get the feature from Rally
+            feature_details = client.get_feature(feature_id)
+            
+            # Validate requirement against feature
+            validation = client.validate_feature_context(feature_details, plan['requirement'])
+            
+            if not validation['valid']:
+                # Feature doesn't match - warn user
+                return {
+                    "warning": "Feature context mismatch",
+                    "feature": feature_details,
+                    "validation": validation,
+                    "message": f"Feature {feature_id} ({feature_details['name']}) doesn't match the requirement well. "
+                              f"Confidence: {validation['confidence']:.2f}. {validation['reason']}",
+                    "preview": preview_payload(plan),
+                    "confirm_anyway": f"To proceed anyway, run: rally_confirm(requirement, confirm=True, force=True)"
+                }
+            elif validation['confidence'] < 0.5:
+                # Low confidence - inform user
+                logger.info(f"Feature validation: {validation['reason']} (confidence: {validation['confidence']:.2f})")
+                
+            # Use the existing feature instead of creating a new one
+            parent_feature_id = feature_details['id']
+            logger.info(f"Using existing feature {feature_id}: {feature_details['name']}")
+            
+        except Exception as e:
+            return {
+                "error": f"Feature {feature_id} not found",
+                "message": str(e),
+                "preview": preview_payload(plan)
+            }
+    
     # Track created items
     created = {
         "feature": None,
+        "feature_used": parent_feature_id,
         "stories": [],
         "tasks": [],
         "audit": []
     }
     
     try:
-        # Create feature if present
-        if plan['feature']:
+        # Create feature if present and no existing feature provided
+        if plan['feature'] and not parent_feature_id:
             f = plan['feature']
             result = client.create_feature(f['title'], f['description'], f['tags'])
             created['feature'] = result

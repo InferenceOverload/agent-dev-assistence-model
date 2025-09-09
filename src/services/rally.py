@@ -255,6 +255,103 @@ class RallyClient:
         else:
             raise Exception("Failed to create task")
             
+    def get_feature(self, feature_id: str) -> Dict[str, Any]:
+        """Get a Rally Feature by ID.
+        
+        Args:
+            feature_id: Feature FormattedID (e.g., "F123456") or ObjectID
+            
+        Returns:
+            Feature details including name, description, state, owner
+            
+        Raises:
+            Exception: If feature not found
+        """
+        # Determine if ID is FormattedID or ObjectID
+        if feature_id.upper().startswith('F'):
+            # FormattedID query
+            query = f'(FormattedID = "{feature_id.upper()}")'
+            endpoint = f"portfolioitem/feature?query={quote(query)}&workspace=/workspace/{self.workspace_id}&fetch=Name,Description,State,Owner,FormattedID,ObjectID,AcceptedLeafStoryCount,LeafStoryCount"
+        else:
+            # Direct ObjectID lookup
+            endpoint = f"portfolioitem/feature/{feature_id}?fetch=Name,Description,State,Owner,FormattedID,ObjectID,AcceptedLeafStoryCount,LeafStoryCount"
+            
+        try:
+            result = self._make_request("GET", endpoint)
+            
+            if "Results" in result and result.get("TotalResultCount", 0) > 0:
+                feature = result["Results"][0]
+            elif "_ref" in result:
+                feature = result
+            else:
+                raise Exception(f"Feature {feature_id} not found")
+                
+            return {
+                "id": str(feature.get("ObjectID", "")),
+                "formatted_id": feature.get("FormattedID", ""),
+                "name": feature.get("Name", ""),
+                "description": feature.get("Description", ""),
+                "state": feature.get("State", {}).get("Name", "") if feature.get("State") else "",
+                "owner": feature.get("Owner", {}).get("_refObjectName", "") if feature.get("Owner") else "",
+                "story_count": feature.get("LeafStoryCount", 0),
+                "accepted_story_count": feature.get("AcceptedLeafStoryCount", 0),
+                "url": f"{self.base_url}/#/detail/portfolioitem/feature/{feature.get('ObjectID', '')}"
+            }
+        except Exception as e:
+            logger.error(f"Failed to get feature {feature_id}: {e}")
+            raise Exception(f"Feature {feature_id} not found in Rally. Please check the feature ID.")
+            
+    def validate_feature_context(self, feature_details: Dict[str, Any], requirement: str) -> Dict[str, Any]:
+        """Validate if a requirement matches feature context.
+        
+        Args:
+            feature_details: Feature details from get_feature()
+            requirement: User requirement text
+            
+        Returns:
+            Validation result with confidence and reason
+        """
+        feature_name = feature_details.get("name", "").lower()
+        feature_desc = feature_details.get("description", "").lower()
+        requirement_lower = requirement.lower()
+        
+        # Extract key terms from requirement
+        req_words = set(word for word in requirement_lower.split() 
+                       if len(word) > 3 and word not in ["this", "that", "with", "from", "have"])
+        
+        # Check for matches in feature name and description
+        name_matches = sum(1 for word in req_words if word in feature_name)
+        desc_matches = sum(1 for word in req_words if word in feature_desc)
+        
+        total_words = len(req_words)
+        if total_words == 0:
+            return {
+                "valid": True,
+                "confidence": 0.5,
+                "reason": "Unable to extract meaningful terms from requirement"
+            }
+            
+        match_ratio = (name_matches * 2 + desc_matches) / (total_words * 2)  # Name matches weighted higher
+        
+        if match_ratio >= 0.5:
+            return {
+                "valid": True,
+                "confidence": match_ratio,
+                "reason": f"Requirement matches feature '{feature_details.get('name', '')}'"
+            }
+        elif match_ratio >= 0.25:
+            return {
+                "valid": True,
+                "confidence": match_ratio,
+                "reason": f"Partial match with feature '{feature_details.get('name', '')}'. Consider reviewing the alignment."
+            }
+        else:
+            return {
+                "valid": False,
+                "confidence": match_ratio,
+                "reason": f"Feature '{feature_details.get('name', '')}' appears to be about different functionality. The requirement doesn't align well with this feature's scope."
+            }
+            
     def link_artifact(self, item_id: str, url: str, description: str = "Related artifact") -> Dict[str, bool]:
         """Link an external artifact to a Rally item.
         
